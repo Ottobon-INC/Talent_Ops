@@ -150,9 +150,10 @@ export const useEmployees = (orgId) => {
     useEffect(() => {
         if (!orgId) return;
 
-        console.log('Setting up real-time subscription for employees/attendance...');
+        // Use a unique channel name per instance to prevent "cannot add callbacks after subscribe" error
+        const instanceId = Math.random().toString(36).substring(2, 9);
         const subscription = supabase
-            .channel('public:attendance')
+            .channel(`employees-all-${orgId}-${instanceId}`)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, (payload) => {
                 console.log('Real-time attendance change detected!', payload);
                 fetchEmployees();
@@ -164,8 +165,9 @@ export const useEmployees = (orgId) => {
             .subscribe();
 
         return () => {
-            console.log('Cleaning up subscription...');
-            supabase.removeChannel(subscription);
+            if (subscription) {
+                supabase.removeChannel(subscription);
+            }
         };
     }, [orgId, fetchEmployees]);
 
