@@ -22,7 +22,11 @@ export const calculateWeekdayDuration = (startDate, endDate) => {
 
 export const useLeaves = (orgId, userId, viewMode = 'personal') => {
     const [leaves, setLeaves] = useState([]);
-    const [leaveStats, setLeaveStats] = useState([]);
+    const [leaveStats, setLeaveStats] = useState({
+        monthlyUsed: 0,
+        yearlyUsed: 0,
+        monthlyQuota: 1
+    });
     const [remainingLeaves, setRemainingLeaves] = useState(0);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -59,28 +63,62 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
                     .single();
 
                 if (!userError && userData) {
-                    // Use monthly_leave_quota if available, otherwise default to 1
                     monthlyQuota = userData.monthly_leave_quota || 1;
                 }
 
-                // Calculate leaves taken/pending in the current month
-                const leavesThisMonth = leavesData ? leavesData.filter(leave => {
-                    const leaveDate = new Date(leave.from_date);
-                    // Only count approved or pending leaves for the current month
-                    return (leave.status === 'approved' || leave.status === 'pending') && 
-                           leaveDate.getMonth() === currentMonth && 
-                           leaveDate.getFullYear() === currentYear &&
-                           !(leave.reason && leave.reason.toLowerCase().includes('loss of pay'));
-                }) : [];
+                // Calculate Stats for the Entire Year (Consolidated Logic)
+                let tempMonthlyUsed = 0;
+                let tempYearlyUsed = 0;
+                let debug_scanned = 0;
+                let debug_approved = 0;
 
-                const daysTakenThisMonth = leavesThisMonth.reduce((sum, leave) => {
-                    const duration = leave.duration_weekdays || 1;
-                    // We only count the 'paid' portion. If lop_days is already set, subtract it.
-                    const paidDuration = Math.max(0, duration - (leave.lop_days || 0));
-                    return sum + paidDuration;
-                }, 0);
+                if (leavesData && Array.isArray(leavesData)) {
+                    leavesData.forEach(leave => {
+                        try {
+                            debug_scanned++;
+                            const fromDate = leave.from_date || '';
+                            const status = (leave.status || '').toLowerCase().trim();
+                            const isApproved = status.includes('approv');
+                            const isPending = status.includes('pend');
+                            
+                            // Check if leave is explicitly marked as Loss of Pay
+                            const reasonText = (leave.reason || '').toLowerCase();
+                            const typeText = (leave.leave_type || '').toLowerCase();
+                            const isLop = reasonText.includes('loss of pay') || typeText.includes('loss of pay');
 
-                setRemainingLeaves(Math.max(0, monthlyQuota - daysTakenThisMonth));
+                            // Calculate duration: column value first, then fallback to date difference
+                            const duration = leave.duration_weekdays || calculateWeekdayDuration(leave.from_date, leave.to_date || leave.from_date) || 1;
+                            const paidDays = Math.max(0, duration - (leave.lop_days || 0));
+
+                            if (isApproved) {
+                                debug_approved++;
+                                // Only count for current year if the year is in the date string
+                                if (fromDate.includes(currentYear.toString())) {
+                                    tempYearlyUsed += paidDays;
+                                }
+                                
+                                if (fromDate.includes(`-${String(currentMonth + 1).padStart(2, '0')}-`)) {
+                                    tempMonthlyUsed += paidDays;
+                                }
+                            } else if (isPending) {
+                                if (fromDate.includes(`-${String(currentMonth + 1).padStart(2, '0')}-`)) {
+                                    tempMonthlyUsed += paidDays;
+                                }
+                            }
+                        } catch (e) {
+                            console.error("Error processing leave for stats:", e);
+                        }
+                    });
+                }
+
+                setLeaveStats({
+                    monthlyUsed: tempMonthlyUsed,
+                    yearlyUsed: tempYearlyUsed,
+                    monthlyQuota,
+                    debug: `Scanned: ${debug_scanned}, Approv: ${debug_approved}, Year: ${currentYear}`
+                });
+
+                setRemainingLeaves(Math.max(0, monthlyQuota - tempMonthlyUsed));
 
                 if (leavesData) {
                     const mappedLeaves = leavesData.map(leave => {

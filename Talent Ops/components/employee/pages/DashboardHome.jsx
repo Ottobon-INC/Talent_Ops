@@ -9,11 +9,20 @@ import { useUser } from '../context/UserContext';
 import AttendanceTracker from '../components/Dashboard/AttendanceTracker';
 import NotesTile from '../../shared/NotesTile';
 import { supabase } from '../../../lib/supabaseClient';
+import { useLeaves } from '../../shared/hooks/useLeaves';
+
+const monthNames = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+];
 
 const DashboardHome = () => {
     const { addToast } = useToast();
-    const { userName, currentTeam, orgId } = useUser();
+    const { userName, userId, currentTeam, orgId } = useUser();
     const navigate = useNavigate();
+
+    // Use the robust centralized hook for leaves
+    const { leaveStats } = useLeaves(orgId, userId, 'personal');
 
     // Helper to format date as YYYY-MM-DD for comparison (Local Time)
     const formatDate = (date) => {
@@ -21,6 +30,19 @@ const DashboardHome = () => {
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
+    };
+
+    const calculateWeekdayDuration = (startDate, endDate) => {
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        let count = 0;
+        const curDate = new Date(start.getTime());
+        while (curDate <= end) {
+            const dayOfWeek = curDate.getDay();
+            if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
+            curDate.setDate(curDate.getDate() + 1);
+        }
+        return count;
     };
 
     // Live Clock State
@@ -47,7 +69,7 @@ const DashboardHome = () => {
     const [loading, setLoading] = useState(true);
 
     // State for leave balance from profile
-    const [leaveBalance, setLeaveBalance] = useState(0);
+    const [leaveBalance, setLeaveBalance] = useState({ remaining: 1, monthlyQuota: 1, yearlyUsed: 0 });
 
 
     // Add Event State
@@ -76,36 +98,12 @@ const DashboardHome = () => {
 
                     if (attendance) setAttendanceData(attendance);
 
-                    // 3. Fetch Leave Balance & Calculate Monthly Available
+                    // 2. Fetch User Profile (for monthly quota)
                     const { data: profileData } = await supabase
                         .from('profiles')
-                        .select('total_leaves_balance, monthly_leave_quota, team_id')
-                        .eq('org_id', orgId)
+                        .select('*')
                         .eq('id', user.id)
                         .single();
-
-                    const { data: leavesForMonth } = await supabase
-                        .from('leaves')
-                        .select('from_date, duration_weekdays, lop_days, status, reason')
-                        .eq('employee_id', user.id)
-                        .eq('org_id', orgId)
-                        .gte('from_date', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0])
-                        .lte('from_date', new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0]);
-
-                    if (profileData) {
-                        const monthlyQuota = profileData.monthly_leave_quota || 1;
-                        const takenThisMonth = leavesForMonth ? leavesForMonth.reduce((sum, leave) => {
-                            if (leave.status === 'approved' || leave.status === 'pending') {
-                                // Don't count LOP as paid leave
-                                if (leave.reason && leave.reason.toLowerCase().includes('loss of pay')) return sum;
-                                const paidDuration = Math.max(0, (leave.duration_weekdays || 1) - (leave.lop_days || 0));
-                                return sum + paidDuration;
-                            }
-                            return sum;
-                        }, 0) : 0;
-                        
-                        setLeaveBalance(Math.max(0, monthlyQuota - takenThisMonth));
-                    }
 
                     // 4. Fetch All Employees & Team Members
                     const { data: allEmps, error: empError } = await supabase.from('profiles').select('id, full_name, team_id').eq('org_id', orgId);
@@ -413,9 +411,10 @@ const DashboardHome = () => {
                     bg="rgba(239, 68, 68, 0.03)"
                 />
                 <StatCard
-                    label="LEAVE BALANCE"
-                    value={attendanceStats.leaveBalance}
-                    subLabel="days"
+                    label="LEAVE STATUS"
+                    value={`${leaveStats.monthlyQuota - leaveStats.monthlyUsed} / ${leaveStats.monthlyQuota}`}
+                    subLabel={`Available (${monthNames[new Date().getMonth()]})`}
+                    secondaryValue={`${leaveStats.yearlyUsed} / 12 Leaves Used (${new Date().getFullYear()})`}
                     icon={<Calendar size={24} />}
                     color="#f59e0b"
                     bg="rgba(245, 158, 11, 0.03)"
@@ -677,7 +676,7 @@ const DashboardHome = () => {
 };
 
 // Enhanced StatCard Component
-const StatCard = ({ label, value, trend, icon, color, subLabel, bg }) => {
+const StatCard = ({ label, value, trend, icon, color, subLabel, secondaryValue, bg }) => {
     const [isHovered, setIsHovered] = React.useState(false);
 
     return (
@@ -686,8 +685,8 @@ const StatCard = ({ label, value, trend, icon, color, subLabel, bg }) => {
             onMouseLeave={() => setIsHovered(false)}
             style={{
                 backgroundColor: '#ffffff',
-                padding: '16px',
-                borderRadius: '6px',
+                padding: '20px',
+                borderRadius: '12px',
                 border: '1px solid #eef2f6',
                 boxShadow: isHovered ? '0 20px 40px -10px rgba(0,0,0,0.06)' : '0 4px 20px rgba(0,0,0,0.01)',
                 display: 'flex',
@@ -699,13 +698,10 @@ const StatCard = ({ label, value, trend, icon, color, subLabel, bg }) => {
                 transform: isHovered ? 'translateY(-5px)' : 'translateY(0)'
             }}
         >
-            {/* Soft background glow */}
-            <div style={{ position: 'absolute', bottom: '-20px', right: '-20px', width: '100px', height: '100px', background: color, opacity: isHovered ? 0.08 : 0, filter: 'blur(30px)', transition: 'opacity 0.4s ease', borderRadius: '50%' }}></div>
-
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div style={{
                     padding: '12px',
-                    borderRadius: '4px',
+                    borderRadius: '8px',
                     backgroundColor: `${color}15`,
                     color: color,
                     display: 'flex',
@@ -731,10 +727,20 @@ const StatCard = ({ label, value, trend, icon, color, subLabel, bg }) => {
                 )}
             </div>
             <div>
-                <p style={{ fontSize: '0.8rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '4px' }}>{label}</p>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-                    <h3 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.04em' }}>{value || 0}</h3>
-                    {subLabel && <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#94a3b8' }}>{subLabel}</span>}
+                <p style={{ fontSize: '0.75rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px' }}>{label}</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                        <h3 style={{ fontSize: '1.6rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.04em' }}>{value}</h3>
+                        {subLabel && <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8' }}>{subLabel}</span>}
+                    </div>
+                    {secondaryValue && (
+                        <>
+                            <div style={{ height: '1px', backgroundColor: '#f1f5f9', margin: '4px 0' }}></div>
+                            <p style={{ fontSize: '0.85rem', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ color: color }}>●</span> {secondaryValue}
+                            </p>
+                        </>
+                    )}
                 </div>
             </div>
         </div>

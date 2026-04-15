@@ -2,11 +2,16 @@ import React from 'react';
 import DataTable from '../../manager/components/UI/DataTable';
 import { Eye, Edit, Trash2 } from 'lucide-react';
 
-const LeavesFeature = ({ leaves, type, title, onAction, userId, projectRole }) => {
+const LeavesFeature = ({ leaves, type, title, onAction, userId, projectRole, leaveStats, remainingLeaves }) => {
     let columns = [];
     let dataToDisplay = leaves;
 
-    if (type === 'leaves') {
+    // Helper for current month name
+    const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' });
+    const currentYear = new Date().getFullYear();
+
+    if (type === 'leaves' || type === 'my-leaves') {
+        // ... (rest of column logic remains)
         // Manager / Exec Approval view OR Employee personal view if employee's ModulePage uses 'leaves' for personal
         // To distinguish, if it's manager view, they can approve/reject.
         // We handle this via projectRole or just let onAction handle the row data.
@@ -130,12 +135,43 @@ const LeavesFeature = ({ leaves, type, title, onAction, userId, projectRole }) =
     }
 
     return (
-        <DataTable
-            title={`${title} List`}
-            columns={columns}
-            data={dataToDisplay}
-            onAction={onAction}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+            {/* Professional Integrated Leave Summary */}
+            {leaveStats && (
+                <div style={{ backgroundColor: 'var(--surface)', padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>Leave Summary</h3>
+                    
+                    <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
+                        {/* Monthly Allowance */}
+                        <div style={{ flex: '1', minWidth: '200px', backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                            <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Monthly Allowance</p>
+                            <span style={{ fontSize: '1.75rem', fontWeight: '800', color: '#0f172a' }}>{leaveStats.monthlyQuota || 1}</span>
+                        </div>
+
+                        {/* Used (Month) */}
+                        <div style={{ flex: '1', minWidth: '200px', backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                            <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Used ({currentMonthName})</p>
+                            <span style={{ fontSize: '1.75rem', fontWeight: '800', color: '#0f172a' }}>{leaveStats.monthlyUsed || 0}</span>
+                        </div>
+
+                        {/* Annual Usage (Blue Pill Style) */}
+                        <div style={{ flex: '1', minWidth: '240px', backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                            <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', fontWeight: '600', color: '#0f172a' }}>Annual Usage ({currentYear})</p>
+                            <div style={{ backgroundColor: '#2563eb', color: 'white', padding: '6px 20px', borderRadius: '24px', fontSize: '1.1rem', fontWeight: '800', letterSpacing: '0.05em' }}>
+                                {leaveStats.yearlyUsed || 0} / 12
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <DataTable
+                title={`${title} List`}
+                columns={columns}
+                data={dataToDisplay}
+                onAction={onAction}
+            />
+        </div>
     );
 };
 
