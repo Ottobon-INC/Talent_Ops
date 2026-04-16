@@ -319,17 +319,18 @@ const Sidebar = ({
                                             {conv.name || 'Conversation'}
                                         </div>
                                         <div className="conversation-preview">
-                                            {/* Double checkmark for sent messages */}
-                                            {!isUnread && lastMessage && (
-                                                <span className="seen-indicator read" title="Seen">
+                                            {/* Seen indicater for sent messages (Issue: Blue ticks outside) */}
+                                            {isSentByMe && lastMessage && (
+                                                <span className={`seen-indicator ${conv.last_message_read_by_others ? 'read' : 'sent'}`} title={conv.last_message_read_by_others ? 'Seen' : 'Delivered'}>
                                                     <svg width="16" height="11" viewBox="0 0 16 11" fill="none">
                                                         <path d="M11.071 0.929L4.5 7.5L1.929 4.929" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                                         <path d="M14.071 0.929L7.5 7.5L6.5 6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                                     </svg>
                                                 </span>
                                             )}
-                                            {lastMessage
-                                                || (conv.conversation_indexes?.[0]?.last_message_at ? '📎 Attachment' : 'No messages yet')}
+                                            <span className="preview-text">
+                                                {lastMessage || (conv.conversation_indexes?.[0]?.last_message_at ? '📎 Attachment' : 'No messages yet')}
+                                            </span>
                                         </div>
                                     </div>
                                     <div className="conversation-meta">

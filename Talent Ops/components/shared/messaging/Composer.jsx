@@ -9,10 +9,10 @@ const Composer = ({
     setErrorMessage,
     loading,
     selectedConversation,
-    // Callbacks
     onSendMessage,
     onSendPoll,
     onFileAttachment,
+    orgUsers
 }) => {
     // ── Local state (owned by Composer) ──
     const [messageInput, setMessageInput] = useState('');
@@ -22,10 +22,39 @@ const Composer = ({
     const [pollQuestion, setPollQuestion] = useState('');
     const [pollOptions, setPollOptions] = useState(['', '']);
     const [allowMultiplePoll, setAllowMultiplePoll] = useState(false);
+    
+    const [cursorPos, setCursorPos] = useState(0);
+    const [mentionSearch, setMentionSearch] = useState('');
+    const [showMentions, setShowMentions] = useState(false);
+    const [mentionIndex, setMentionIndex] = useState(0);
+    
+    // -- Optimized Mentions Logic --
+    const filteredUsers = (orgUsers && showMentions) 
+        ? orgUsers.filter(u => 
+            u.full_name?.toLowerCase().includes(mentionSearch.toLowerCase()) || 
+            u.email?.toLowerCase().includes(mentionSearch.toLowerCase())
+          ).slice(0, 10)
+        : [];
 
     // ── Handlers ──
     const handleTextareaChange = (e) => {
-        setMessageInput(e.target.value);
+        const value = e.target.value;
+        const position = e.target.selectionStart;
+        setMessageInput(value);
+        setCursorPos(position);
+
+        // Detect mention trigger
+        const textBeforeCursor = value.substring(0, position);
+        const mentionMatch = textBeforeCursor.match(/@(\w*)$/);
+
+        if (mentionMatch) {
+            setShowMentions(true);
+            setMentionSearch(mentionMatch[1]);
+            setMentionIndex(0);
+        } else {
+            setShowMentions(false);
+        }
+
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
             textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
@@ -33,9 +62,39 @@ const Composer = ({
     };
 
     const handleKeyPress = (e) => {
+        if (showMentions && filteredUsers.length > 0) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setMentionIndex(prev => (prev + 1) % filteredUsers.length);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setMentionIndex(prev => (prev - 1 + filteredUsers.length) % filteredUsers.length);
+            } else if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                if (filteredUsers[mentionIndex]) {
+                    insertMention(filteredUsers[mentionIndex]);
+                }
+            } else if (e.key === 'Escape') {
+                setShowMentions(false);
+            }
+            return;
+        }
+
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSend();
+        }
+    };
+
+    const insertMention = (user) => {
+        const before = messageInput.substring(0, cursorPos).replace(/@\w*$/, '');
+        const after = messageInput.substring(cursorPos);
+        const mentionText = `@[${user.full_name || user.email}](${user.id}) `;
+        setMessageInput(before + mentionText + after);
+        setShowMentions(false);
+        setMentionSearch('');
+        if (textareaRef.current) {
+            textareaRef.current.focus();
         }
     };
 
@@ -164,6 +223,71 @@ const Composer = ({
                                 <button onClick={() => removeAttachment(index)}>
                                     <X size={14} />
                                 </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Mention Suggestions Dropdown */}
+                {showMentions && filteredUsers.length > 0 && (
+                    <div className="mention-suggestions" style={{
+                        position: 'absolute',
+                        bottom: 'calc(100% + 10px)',
+                        left: '10px',
+                        width: '280px',
+                        maxHeight: '320px',
+                        background: 'white',
+                        border: '1px solid rgba(0,0,0,0.08)',
+                        borderRadius: '12px',
+                        boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
+                        zIndex: 1000,
+                        overflowY: 'auto',
+                        padding: '6px'
+                    }}>
+                        <div style={{ padding: '8px 12px', fontSize: '12px', fontWeight: '600', color: '#64748b', borderBottom: '1px solid #f1f5f9', marginBottom: '4px' }}>
+                            SUGGESTIONS
+                        </div>
+                        {filteredUsers.map((user, idx) => (
+                            <div
+                                key={user.id}
+                                onClick={() => insertMention(user)}
+                                style={{
+                                    padding: '8px 12px',
+                                    cursor: 'pointer',
+                                    background: idx === mentionIndex ? '#f1f5f9' : 'transparent',
+                                    borderRadius: '8px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                <div style={{
+                                    width: '32px',
+                                    height: '32px',
+                                    borderRadius: '50%',
+                                    background: `linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)`,
+                                    color: 'white',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '13px',
+                                    fontWeight: 'bold',
+                                    boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
+                                }}>
+                                    {(user.full_name || 'U').charAt(0).toUpperCase()}
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {user.full_name}
+                                    </div>
+                                    <div style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        @{user.email?.split('@')[0]}
+                                    </div>
+                                </div>
+                                {idx === mentionIndex && (
+                                    <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#3b82f6' }} />
+                                )}
                             </div>
                         ))}
                     </div>

@@ -176,6 +176,29 @@ export const getConversationsByCategory = async (userId, category, orgId) => {
             }));
         }
 
+        // Step 6: Enrich with last_message_read_by_others flag (Issue: Blue ticks outside)
+        const { data: allMembers, error: membersError } = await supabase
+            .from('conversation_members')
+            .select('conversation_id, user_id, last_read_at')
+            .in('conversation_id', conversationIds);
+
+        if (!membersError && allMembers) {
+            conversationsWithIndexes.forEach(conv => {
+                const idx = conv.conversation_indexes?.[0];
+                if (idx && idx.last_sender_id === userId && idx.last_message_at) {
+                    const lastMsgTime = new Date(idx.last_message_at);
+                    const otherMembers = allMembers.filter(m => m.conversation_id === conv.id && m.user_id !== userId);
+                    
+                    // Mark as read if ANY other person has read past the last message time
+                    conv.last_message_read_by_others = otherMembers.some(m => 
+                        m.last_read_at && new Date(m.last_read_at) >= lastMsgTime
+                    );
+                } else {
+                    conv.last_message_read_by_others = false;
+                }
+            });
+        }
+
         return conversationsWithIndexes;
     } catch (error) {
         console.error('Error in getConversationsByCategory:', error);
@@ -191,6 +214,8 @@ export const getConversationsByCategory = async (userId, category, orgId) => {
 export const getConversationMessages = async (conversationId, orgId = null) => {
     try {
         const resolvedOrgId = orgId || localStorage.getItem('org_id');
+        
+        // 1. Fetch messages
         let query = supabase
             .from('messages')
             .select(`
@@ -209,19 +234,37 @@ export const getConversationMessages = async (conversationId, orgId = null) => {
             `)
             .eq('conversation_id', conversationId);
         
-        // Only filter by org_id if we actually have one
         if (resolvedOrgId) {
             query = query.eq('org_id', resolvedOrgId);
         }
         
-        const { data, error } = await query.order('created_at', { ascending: true });
-
-        // We also need to fetch profile names for the reactions and replied sender
-        // Doing this client-side or via separate query might be cleaner than deep nested joins if RLS is tricky
-        // But let's try to infer sender names from the already loaded conversation members if possible
-
+        const { data: messages, error } = await query.order('created_at', { ascending: true });
         if (error) throw error;
-        return data || [];
+
+        // 2. Fetch members and their last_read_at timestamps to calculate "Seen by"
+        const { data: members } = await supabase
+            .from('conversation_members')
+            .select('user_id, last_read_at, profiles(full_name)')
+            .eq('conversation_id', conversationId);
+
+        // 3. Enrich messages with read status metadata
+        const enrichedMessages = messages.map(msg => {
+            const seenBy = (members || [])
+                .filter(m => m.user_id !== msg.sender_user_id && m.last_read_at && new Date(m.last_read_at) >= new Date(msg.created_at))
+                .map(m => ({
+                    user_id: m.user_id,
+                    name: m.profiles?.full_name || 'User',
+                    seen_at: m.last_read_at
+                }));
+
+            return {
+                ...msg,
+                seen_by: seenBy,
+                is_read_by_others: seenBy.length > 0
+            };
+        });
+
+        return enrichedMessages;
     } catch (error) {
         console.error('Error fetching messages:', error);
         throw error;
@@ -238,6 +281,24 @@ export const getConversationMessages = async (conversationId, orgId = null) => {
  */
 export const sendMessage = async (conversationId, userId, content, files = [], orgId = null) => {
     try {
+        // Fix: Allow sending files/documents without mandatory text (Issue 6)
+        if (!content && (!files || files.length === 0)) {
+            throw new Error('Message content or files required');
+        }
+
+        // Support for @mentions (Issue 3)
+        const mentions = [];
+        if (content) {
+            const mentionRegex = /@\[([^\]]+)\]\(([^)]+)\)|@(\w+)/g;
+            let match;
+            while ((match = mentionRegex.exec(content)) !== null) {
+                const mentionedId = match[2] || match[3];
+                if (mentionedId && !mentions.includes(mentionedId)) {
+                    mentions.push(mentionedId);
+                }
+            }
+        }
+
         // Insert the message
         const { data: message, error: messageError } = await supabase
             .from('messages')
@@ -246,8 +307,9 @@ export const sendMessage = async (conversationId, userId, content, files = [], o
                 sender_user_id: userId,
                 sender_type: 'human',
                 message_type: 'chat',
-                content: content,
+                content: content || '',
                 org_id: orgId,
+                mentions: mentions, // Backend support for mentions
                 created_at: new Date().toISOString()
             })
             .select()
@@ -263,16 +325,16 @@ export const sendMessage = async (conversationId, userId, content, files = [], o
         }
 
         // Update conversation index
-        // Use '[Attachment]' if no text but files were sent
         const indexMessage = content || (files && files.length > 0 ? '📎 Attachment' : '');
-        await updateConversationIndex(conversationId, indexMessage);
+        await updateConversationIndex(conversationId, indexMessage, userId);
 
-        // ── 1. Fetch Sender Name and Other Members for Notifications ──
+        // Send notifications
         try {
             const { data: convData } = await supabase.from('conversations').select('org_id').eq('id', conversationId).single();
             const { data: senderProfile } = await supabase.from('profiles').select('full_name').eq('id', userId).single();
             const senderName = senderProfile?.full_name || 'Someone';
 
+            // Get all recipients (excluding sender)
             const { data: members } = await supabase
                 .from('conversation_members')
                 .select('user_id')
@@ -280,19 +342,27 @@ export const sendMessage = async (conversationId, userId, content, files = [], o
                 .neq('user_id', userId);
 
             if (members && members.length > 0) {
-                // Send notifications to each member
-                const notificationPromises = members.map(member =>
-                    sendNotification(
-                        member.user_id,
-                        userId,
-                        senderName,
-                        content || 'Sent an attachment',
-                        'message',
-                        convData?.org_id
-                    )
+                const recipients = members.map(m => m.user_id);
+                
+                // Add priority notifications for mentions
+                const mentionNotifications = mentions.filter(id => recipients.includes(id)).map(id => 
+                    sendNotification(id, userId, senderName, `Mentioned you: ${content.substring(0, 50)}`, 'mention', convData?.org_id)
                 );
-                // Fire and forget or await depending on preference (awaiting for reliability here)
-                await Promise.all(notificationPromises);
+
+                const standardNotifications = members
+                    .filter(m => !mentions.includes(m.user_id))
+                    .map(member =>
+                        sendNotification(
+                            member.user_id,
+                            userId,
+                            senderName,
+                            content || 'Sent an attachment',
+                            'message',
+                            convData?.org_id
+                        )
+                    );
+                
+                await Promise.all([...mentionNotifications, ...standardNotifications]);
             }
         } catch (notifyError) {
             console.warn('Non-fatal: Failed to send message notifications', notifyError);
@@ -358,8 +428,9 @@ export const uploadAttachment = async (file, conversationId, messageId, orgId = 
  * Update conversation index with last message
  * @param {string} conversationId - ID of the conversation
  * @param {string} lastMessage - Last message content
+ * @param {string} lastSenderId - ID of the sender (Issue: Blue ticks outside)
  */
-export const updateConversationIndex = async (conversationId, lastMessage) => {
+export const updateConversationIndex = async (conversationId, lastMessage, lastSenderId) => {
     try {
         const { error } = await supabase
             .from('conversation_indexes')
@@ -368,6 +439,7 @@ export const updateConversationIndex = async (conversationId, lastMessage) => {
                     conversation_id: conversationId,
                     last_message: lastMessage,
                     last_message_at: new Date().toISOString(),
+                    last_sender_id: lastSenderId, // Store who sent the last message
                     updated_at: new Date().toISOString()
                 },
                 {
@@ -566,22 +638,35 @@ export const getOrCreateOrgConversation = async (userId, orgId) => {
  * @returns {Object} Subscription object
  */
 export const subscribeToConversation = (conversationId, callbacks) => {
-    const { onMessage, onReaction } = typeof callbacks === 'function'
-        ? { onMessage: callbacks } // Backward compatibility
+    const { onMessage, onReaction, onPollUpdate, onPresence } = typeof callbacks === 'function'
+        ? { onMessage: callbacks }
         : callbacks;
 
+    // Use a more robust channel and subscribe to all postgres changes for the messages table
+    // ensuring we also catch UPDATES (for edits/deletes) and not just INSERTS
     const subscription = supabase
-        .channel(`conversation:${conversationId}`)
+        .channel(`conversation:${conversationId}`, {
+            config: {
+                presence: {
+                    key: conversationId,
+                },
+            },
+        })
         .on(
             'postgres_changes',
             {
-                event: 'INSERT',
+                event: '*', // Listen to INSERT, UPDATE, DELETE (Issue 5 & 14)
                 schema: 'public',
                 table: 'messages',
                 filter: `conversation_id=eq.${conversationId}`
             },
-            (payload) => {
-                if (onMessage) onMessage(payload.new);
+            async (payload) => {
+                if (payload.eventType === 'INSERT') {
+                    if (onMessage) onMessage(payload.new);
+                } else if (payload.eventType === 'UPDATE') {
+                    // Handle message edits/deletes in real-time
+                    if (callbacks.onMessageUpdate) callbacks.onMessageUpdate(payload.new);
+                }
             }
         )
         .on(
@@ -592,7 +677,6 @@ export const subscribeToConversation = (conversationId, callbacks) => {
                 table: 'message_reactions'
             },
             (payload) => {
-                console.log('Realtime reaction event (raw):', payload);
                 if (onReaction) onReaction(payload.new || payload.old);
             }
         )
@@ -604,11 +688,19 @@ export const subscribeToConversation = (conversationId, callbacks) => {
                 table: 'poll_votes'
             },
             (payload) => {
-                if (callbacks.onPollUpdate) callbacks.onPollUpdate(payload.new || payload.old);
+                if (onPollUpdate) onPollUpdate(payload.new || payload.old);
             }
-        )
-        .subscribe();
+        );
 
+    // Support for Presence (Typing Indicator & Online Status - Issue 12 & 13)
+    if (onPresence) {
+        subscription.on('presence', { event: 'sync' }, () => {
+            const state = subscription.presenceState();
+            onPresence(state);
+        });
+    }
+
+    subscription.subscribe();
     return subscription;
 };
 
@@ -1315,19 +1407,133 @@ export const removeReaction = async (messageId, userId, reaction, orgId = null) 
  * @param {string} reaction - Emoji reaction
  * @returns {Promise<boolean>} True if added, false if removed
  */
-export const toggleReaction = async (messageId, userId, reaction) => {
+/**
+ * Toggle a reaction (add if not exists, remove if exists)
+ * Robust version that ensures persistence (Issue 2)
+ */
+export const toggleReaction = async (messageId, userId, reaction, orgId = null) => {
     try {
-        const { error } = await supabase.rpc('toggle_reaction', {
-            p_message_id: messageId,
-            p_user_id: userId,
-            p_reaction: reaction
-        });
+        // First check if it exists
+        const { data: existing, error: checkError } = await supabase
+            .from('message_reactions')
+            .select('id')
+            .eq('message_id', messageId)
+            .eq('user_id', userId)
+            .eq('reaction', reaction)
+            .maybeSingle();
 
-        if (error) throw error;
-        return true;
+        if (checkError) throw checkError;
+
+        if (existing) {
+            // Remove it
+            const { error: delError } = await supabase
+                .from('message_reactions')
+                .delete()
+                .eq('id', existing.id);
+            if (delError) throw delError;
+            return false; // Removed
+        } else {
+            // Add it
+            const insertData = {
+                message_id: messageId,
+                user_id: userId,
+                reaction: reaction
+            };
+            if (orgId) insertData.org_id = orgId;
+
+            const { error: insError } = await supabase
+                .from('message_reactions')
+                .insert([insertData]);
+            if (insError) throw insError;
+            return true; // Added
+        }
     } catch (error) {
         console.error('Error toggling reaction:', error);
         throw error;
+    }
+};
+
+/**
+ * Edit an existing message (Issue 14)
+ * @param {string} messageId - Message ID
+ * @param {string} newContent - New content
+ * @param {string} userId - User performing the edit
+ */
+export const editMessage = async (messageId, newContent, userId) => {
+    try {
+        // Verify ownership and time window (e.g., 5 mins)
+        const { data: msg, error: fetchError } = await supabase
+            .from('messages')
+            .select('sender_user_id, created_at')
+            .eq('id', messageId)
+            .single();
+
+        if (fetchError) throw fetchError;
+        if (msg.sender_user_id !== userId) throw new Error('You can only edit your own messages');
+
+        const ageInMinutes = (new Date() - new Date(msg.created_at)) / (1000 * 60);
+        if (ageInMinutes > 15) throw new Error('Messages can only be edited within 15 minutes');
+
+        const { data, error } = await supabase
+            .from('messages')
+            .update({ 
+                content: newContent, 
+                is_edited: true,
+                updated_at: new Date().toISOString() 
+            })
+            .eq('id', messageId)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data;
+    } catch (error) {
+        console.error('Error editing message:', error);
+        throw error;
+    }
+};
+
+/**
+ * Send typing status using Presence (Issue 12)
+ * @param {Object} channel - The active Supabase channel
+ * @param {string} userId - User ID
+ * @param {boolean} isTyping - Typing status
+ */
+export const sendTypingStatus = async (channel, userId, isTyping) => {
+    if (!channel) return;
+    try {
+        await channel.track({
+            user_id: userId,
+            is_typing: isTyping,
+            online_at: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Error tracking typing status:', error);
+    }
+};
+
+/**
+ * Update user availability status (Issue 13)
+ * @param {string} userId - User ID
+ * @param {string} status - 'available', 'break', 'absent'
+ */
+export const updateUserStatus = async (userId, status) => {
+    try {
+        const statusMap = {
+            available: 'Green',
+            break: 'Orange',
+            absent: 'Red'
+        };
+        const color = statusMap[status] || 'Green';
+
+        const { error } = await supabase
+            .from('profiles')
+            .update({ online_status: color, last_seen_at: new Date().toISOString() })
+            .eq('id', userId);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error updating status:', error);
     }
 };
 
