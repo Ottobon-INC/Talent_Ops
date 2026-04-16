@@ -142,7 +142,7 @@ const ChatWindow = ({
 
     const handleReaction = (messageId, emoji) => {
         setShowReactionPicker(null);
-        onReaction(messageId, emoji);
+        onReaction(messageId, emoji, selectedConversation.org_id);
     };
 
     const handleRenameGroup = async () => {
@@ -496,8 +496,8 @@ const ChatWindow = ({
                                                                 </button>
                                                             )}
 
-                                                            {/* Delete Actions */}
-                                                            {msg.sender_user_id === currentUserId && (new Date() - new Date(msg.created_at)) < 5 * 60 * 1000 && (
+                                                            {/* Delete Actions - Now enabled for all message types (Issue 8) */}
+                                                            {msg.sender_user_id === currentUserId && (new Date() - new Date(msg.created_at)) < 15 * 60 * 1000 && (
                                                                 <>
                                                                     <div style={{ width: '1px', height: '18px', background: '#e2e8f0', margin: '0 6px' }} />
                                                                     <button onClick={() => onDeleteForMe(msg.id)} title="Delete for me"
@@ -575,8 +575,11 @@ const ChatWindow = ({
                                                 <div className="message-time">
                                                     {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                     {msg.sender_user_id === currentUserId && (
-                                                        <span style={{ marginLeft: '4px', display: 'inline-flex', verticalAlign: 'middle' }}>
-                                                            <svg width="16" height="11" viewBox="0 0 16 11" fill="none" style={{ color: '#3b82f6' }}>
+                                                        <span 
+                                                            style={{ marginLeft: '4px', display: 'inline-flex', verticalAlign: 'middle' }}
+                                                            title={msg.seen_by?.length > 0 ? msg.seen_by.map(s => `Seen by ${s.name} at ${new Date(s.seen_at).toLocaleTimeString()}`).join('\n') : 'Delivered'}
+                                                        >
+                                                            <svg width="16" height="11" viewBox="0 0 16 11" fill="none" style={{ color: msg.is_read_by_others ? '#3b82f6' : '#94a3b8' }}>
                                                                 <path d="M11.071 0.929L4.5 7.5L1.929 4.929" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                                                 <path d="M14.071 0.929L7.5 7.5L6.5 6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                                             </svg>

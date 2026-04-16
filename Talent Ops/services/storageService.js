@@ -15,10 +15,28 @@ export const sanitizeFileName = (fileName) => {
     if (!fileName) return `file_${Date.now()}`;
 
     // Replace characters that break S3/Supabase keys: [ ] { }
-    // These are often the cause of "400 Bad Request" in storage uploads
     return fileName
         .replace(/[\[\]{}]/g, '') // Remove brackets/braces
         .replace(/\s+/g, '_');    // Replace spaces with underscores for URL safety
+};
+
+/**
+ * Validates file type against whitelist (Issue 7)
+ */
+export const isFileTypeAllowed = (file) => {
+    const allowedExtensions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'gif', 'webp'];
+    const allowedMimeTypes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp'
+    ];
+
+    const fileExt = file.name.split('.').pop().toLowerCase();
+    return allowedExtensions.includes(fileExt) || allowedMimeTypes.includes(file.type);
 };
 
 /**
@@ -27,7 +45,12 @@ export const sanitizeFileName = (fileName) => {
  */
 export const uploadFile = async ({ bucket, path, file }) => {
     try {
-        // 1. PROACTIVE AUTH CHECK: This prevents "failing after some days"
+        // Validation: Block ZIP, executables, etc. (Issue 7)
+        if (!isFileTypeAllowed(file)) {
+            throw new Error('File type not allowed. Only PDF, Word documents, and Images are permitted.');
+        }
+
+        // 1. PROACTIVE AUTH CHECK
         // by forcing a session refresh right before the high-stakes upload.
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         if (sessionError || !session) {

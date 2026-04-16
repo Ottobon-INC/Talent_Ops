@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Bell, Check, Trash2, X, CheckCheck } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import { markAllNotificationsAsRead, markNotificationAsRead } from '../../services/notificationService';
 
 const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpdate }) => {
     const [notifications, setNotifications] = useState([]);
@@ -85,10 +86,7 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
 
     const markAsRead = async (notificationId) => {
         try {
-            await supabase
-                .from('notifications')
-                .update({ is_read: true })
-                .eq('id', notificationId);
+            await markNotificationAsRead(notificationId);
 
             setNotifications(prev =>
                 prev.map(notif =>
@@ -123,11 +121,7 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
             const unreadNotifications = notifications.filter(n => !n.is_read);
             if (unreadNotifications.length === 0) return;
 
-            await supabase
-                .from('notifications')
-                .update({ is_read: true })
-                .eq('receiver_id', currentUserId)
-                .eq('is_read', false);
+            await markAllNotificationsAsRead(currentUserId);
 
             setNotifications(prev =>
                 prev.map(notif => ({ ...notif, is_read: true }))

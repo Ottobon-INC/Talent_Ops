@@ -92,3 +92,40 @@ export const sendAnnouncementNotification = async (recipientIds, creatorId, crea
     const message = `${announcementTitle}`;
     await sendBulkNotifications(recipientIds, creatorId, creatorName, message, 'announcement', orgId);
 };
+
+/**
+ * Marks all notifications as read for a user (Issue 9)
+ * @param {string} userId - User ID
+ */
+export const markAllNotificationsAsRead = async (userId) => {
+    try {
+        const { error } = await supabase
+            .from('notifications')
+            .update({ is_read: true })
+            .eq('receiver_id', userId)
+            .eq('is_read', false);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error marking all notifications as read:', error);
+        throw error;
+    }
+};
+
+/**
+ * Marks a single notification as read
+ * @param {string} notificationId - Notification ID
+ */
+export const markNotificationAsRead = async (notificationId) => {
+    try {
+        const { error } = await supabase
+            .from('notifications')
+            .update({ is_read: true })
+            .eq('id', notificationId);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error marking notification as read:', error);
+        throw error;
+    }
+};
