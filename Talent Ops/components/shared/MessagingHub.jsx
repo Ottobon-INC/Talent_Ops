@@ -204,6 +204,17 @@ const MessagingHub = () => {
                         console.error('Error handling realtime message:', err);
                     }
                 },
+                onMessageUpdate: (updatedMessage) => {
+                    setMessages(prev => prev.map(m => m.id === updatedMessage.id ? { ...m, ...updatedMessage } : m));
+                    if (updatedMessage.is_deleted) {
+                         setConversations(prevConvs => prevConvs.map(c => {
+                             if (c.id === updatedMessage.conversation_id) {
+                                 return { ...c, conversation_indexes: [{ last_message: 'This message was deleted', last_message_at: updatedMessage.updated_at || updatedMessage.created_at }] };
+                             }
+                             return c;
+                         }));
+                    }
+                },
                 onReaction: async (payload) => {
                     const msgId = payload?.message_id;
                     const userId = payload?.user_id;
@@ -217,8 +228,19 @@ const MessagingHub = () => {
                         }
                     }
                 },
-                onPollUpdate: async (payload) => {
+                onPollUpdate: (payload) => {
                     if (payload.message_id) fetchPollVotes(payload.message_id);
+                },
+                onPresence: (presenceState) => {
+                    const typingUsers = [];
+                    Object.values(presenceState).forEach(presences => {
+                        presences.forEach(p => {
+                            if (p.is_typing && p.user_id !== currentUserIdRef.current) {
+                                typingUsers.push(p.user_id);
+                            }
+                        });
+                    });
+                    // You could set state here to show "X is typing..."
                 }
             });
         }
@@ -368,6 +390,16 @@ const MessagingHub = () => {
     // ══════════════════════════════════════════════
     //  MESSAGE HANDLERS
     // ══════════════════════════════════════════════
+
+    const handleEditMessage = async (messageId, newContent) => {
+        try {
+            const updated = await editMessage(messageId, newContent, currentUserId);
+            setMessages(prev => prev.map(m => m.id === messageId ? updated : m));
+            setErrorMessage(null);
+        } catch (error) {
+            setErrorMessage(`Failed to edit message: ${error.message}`);
+        }
+    };
 
     const handleSendMessage = async (content, attachmentFiles) => {
         if (!content.trim() && attachmentFiles.length === 0) return;
@@ -756,6 +788,7 @@ const MessagingHub = () => {
                         setErrorMessage={setErrorMessage}
                         loading={loading}
                         selectedConversation={selectedConversation}
+                        orgUsers={orgUsers}
                         onSendMessage={handleSendMessage}
                         onSendPoll={handleSendPoll}
                     />
