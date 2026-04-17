@@ -269,7 +269,9 @@ export const sendMessage = async (conversationId, userId, content, files = [], o
         }
 
         // Support for @mentions (Issue 3)
-        const mentions = extractMentions(content);
+        // Fetch members to resolve name-based mentions
+        const membersForMentions = await getConversationMembers(conversationId);
+        const mentions = extractMentions(content, membersForMentions);
 
         // Insert the message
         const { data: message, error: messageError } = await supabase
@@ -306,34 +308,31 @@ export const sendMessage = async (conversationId, userId, content, files = [], o
             const senderName = senderProfile?.full_name || 'Someone';
 
             // Get all recipients (excluding sender)
-            const { data: members } = await supabase
-                .from('conversation_members')
-                .select('user_id')
-                .eq('conversation_id', conversationId)
-                .neq('user_id', userId);
+            // Use already fetched members list for performance
+            const recipientsList = membersForMentions.filter(m => m.user_id !== userId);
 
-            if (members && members.length > 0) {
-                const recipients = members.map(m => m.user_id);
+            if (recipientsList && recipientsList.length > 0) {
+                const recipients = recipientsList.map(m => m.user_id || m.id);
                 
-                // Add priority notifications for mentions
-                const mentionNotifications = mentions.filter(id => recipients.includes(id)).map(id => 
-                    sendNotification(id, userId, senderName, `Mentioned you: ${content.substring(0, 50)}`, 'mention', convData?.org_id)
-                );
-
-                const standardNotifications = members
-                    .filter(m => !mentions.includes(m.user_id))
-                    .map(member =>
+                // 1. If someone is mentioned, ONLY notify mentioned users
+                if (mentions.length > 0) {
+                   const mentionRecipients = mentions.filter(id => recipients.includes(id));
+                   await Promise.all(mentionRecipients.map(id => 
+                       sendNotification(id, userId, senderName, `Mentioned you: ${content.substring(0, 50)}`, 'mention', convData?.org_id)
+                   ));
+                } else {
+                    // 2. Otherwise notify everyone
+                    await Promise.all(recipients.map(recipientId =>
                         sendNotification(
-                            member.user_id,
+                            recipientId,
                             userId,
                             senderName,
                             content || 'Sent an attachment',
                             'message',
                             convData?.org_id
                         )
-                    );
-                
-                await Promise.all([...mentionNotifications, ...standardNotifications]);
+                    ));
+                }
             }
         } catch (notifyError) {
             console.warn('Non-fatal: Failed to send message notifications', notifyError);
@@ -1203,31 +1202,23 @@ export const sendMessageWithReply = async (conversationId, content, senderId, re
             const { data: senderProfile } = await supabase.from('profiles').select('full_name').eq('id', senderId).single();
             const senderName = senderProfile?.full_name || 'Someone';
 
-            const { data: members } = await supabase
-                .from('conversation_members')
-                .select('user_id')
-                .eq('conversation_id', conversationId)
-                .neq('user_id', senderId);
-
-            if (members && members.length > 0) {
-                const recipients = members.map(m => m.user_id);
+            // Support for @mentions (Issue 3)
+            // Fetch members to resolve name-based mentions
+            const membersList = await getConversationMembers(conversationId);
+            const mentions = extractMentions(content, membersList);
+            
+            if (membersList && membersList.length > 0) {
+                const recipients = membersList.filter(m => m.user_id !== senderId).map(m => m.user_id || m.id);
                 
-                // Track who gets notified to avoid double notifications
-                const notifiedUserIds = [];
-
-                // 1. Mention notifications (Higher priority)
+                // 1. If someone is mentioned, ONLY notify mentioned users
                 if (mentions.length > 0) {
                     const mentionRecipients = mentions.filter(id => recipients.includes(id));
-                    await Promise.all(mentionRecipients.map(id => {
-                        notifiedUserIds.push(id);
-                        return sendNotification(id, senderId, senderName, `Mentioned you: ${content.substring(0, 50)}`, 'mention', convData?.org_id || orgId);
-                    }));
-                }
-
-                // 2. Standard message notifications
-                const standardRecipients = recipients.filter(id => !notifiedUserIds.includes(id));
-                if (standardRecipients.length > 0) {
-                    await Promise.all(standardRecipients.map(id => 
+                    await Promise.all(mentionRecipients.map(id => 
+                        sendNotification(id, senderId, senderName, `Mentioned you: ${content.substring(0, 50)}`, 'mention', convData?.org_id || orgId)
+                    ));
+                } else {
+                    // 2. Otherwise, send standard message notifications to all members
+                    await Promise.all(recipients.map(id => 
                         sendNotification(id, senderId, senderName, content || 'Sent a reply', 'message', convData?.org_id || orgId)
                     ));
                 }
@@ -1243,22 +1234,31 @@ export const sendMessageWithReply = async (conversationId, content, senderId, re
     }
 };
 
-/**
- * Helper to extract user IDs from mentions in message content
- * Supports both raw @email/@name and formatted @[Name](ID)
- */
-const extractMentions = (content) => {
+const extractMentions = (content, members = []) => {
     if (!content) return [];
+    const mentionRegex = /@\[([^\]]+)\]\(([^)]+)\)|@\[([^\]]+)\]|@(\w+)/g;
     const mentions = [];
-    const mentionRegex = /@\[([^\]]+)\]\(([^)]+)\)|@(\w+)/g;
     let match;
+    
     while ((match = mentionRegex.exec(content)) !== null) {
-        const mentionedId = match[2] || match[3];
-        if (mentionedId && !mentions.includes(mentionedId)) {
-            mentions.push(mentionedId);
+        if (match[2]) {
+            // Format: @[name](id)
+            mentions.push(match[2]);
+        } else if (match[3]) {
+            // Format: @[Name] - resolve from name
+            const name = match[3].toLowerCase();
+            const matchedMember = members.find(m => 
+                (m.full_name || m.name || '').toLowerCase() === name
+            );
+            if (matchedMember) {
+                mentions.push(matchedMember.id || matchedMember.user_id);
+            }
+        } else if (match[4]) {
+            // Format: @id
+            mentions.push(match[4]);
         }
     }
-    return mentions;
+    return [...new Set(mentions)];
 };
 
 /**

@@ -5,7 +5,7 @@ const TextRenderer = ({ message }) => {
     if (!content) return null;
 
     const urlPattern = /(https?:\/\/[^\s]+)/g;
-    const mentionPattern = /@\[([^\]]+)\]\(([^)]+)\)/g;
+    const mentionPattern = /@\[([^\]]+)\](?:\(([^)]+)\))?/g;
     const lines = content.split('\n');
 
     return (
