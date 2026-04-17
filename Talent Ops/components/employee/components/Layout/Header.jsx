@@ -10,10 +10,13 @@ import { useTheme } from '../../../shared/context/ThemeContext';
 
 import { useBrowserNotification } from '../../../../hooks/useBrowserNotification';
 
+import { useMessages } from '../../../shared/context/MessageContext';
+
 const Header = () => {
     const { addToast } = useToast();
     const navigate = useNavigate();
     const { userRole, userId, orgId } = useUser();
+    const { unreadCount: messageUnreadCount } = useMessages(); // Get unread count from message context
 
     // Enable browser notifications - moved down
     // useBrowserNotification(userId);
@@ -181,7 +184,7 @@ const Header = () => {
         fetchUnreadCount();
         const interval = setInterval(fetchUnreadCount, 30000);
         return () => clearInterval(interval);
-    }, []);
+    }, [messageUnreadCount]); // Re-fetch when message unread count changes
 
     // Enable browser notifications with wrapper callback
     useBrowserNotification(userId, handleNotificationUpdate);

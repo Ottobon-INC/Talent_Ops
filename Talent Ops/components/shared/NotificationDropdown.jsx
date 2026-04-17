@@ -40,6 +40,36 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                     if (onNotificationUpdate) onNotificationUpdate();
                 }
             )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'notifications',
+                    filter: `receiver_id=eq.${currentUserId}`
+                },
+                (payload) => {
+                    console.log('Notification updated:', payload.new);
+                    // If it was marked as read, remove it from the unread-only list
+                    if (payload.new.is_read) {
+                        setNotifications((prev) => prev.filter(n => n.id !== payload.new.id));
+                    }
+                    if (onNotificationUpdate) onNotificationUpdate();
+                }
+            )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'DELETE',
+                    schema: 'public',
+                    table: 'notifications'
+                },
+                (payload) => {
+                    console.log('Notification deleted:', payload.old);
+                    setNotifications((prev) => prev.filter(n => n.id !== payload.old.id));
+                    if (onNotificationUpdate) onNotificationUpdate();
+                }
+            )
             .subscribe();
 
         return () => {
@@ -71,8 +101,9 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                 .from('notifications')
                 .select('*')
                 .eq('receiver_id', currentUserId)
+                .eq('is_read', false) // Only fetch unread notifications
                 .order('created_at', { ascending: false })
-                .limit(10);
+                .limit(20);
 
             if (!error) {
                 setNotifications(data || []);
@@ -88,11 +119,8 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
         try {
             await markNotificationAsRead(notificationId);
 
-            setNotifications(prev =>
-                prev.map(notif =>
-                    notif.id === notificationId ? { ...notif, is_read: true } : notif
-                )
-            );
+            // Remove from list immediately once read to clear "history"
+            setNotifications(prev => prev.filter(notif => notif.id !== notificationId));
 
             if (onNotificationUpdate) onNotificationUpdate();
         } catch (err) {
@@ -123,9 +151,8 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
 
             await markAllNotificationsAsRead(currentUserId);
 
-            setNotifications(prev =>
-                prev.map(notif => ({ ...notif, is_read: true }))
-            );
+            // Clear the entire list since they were all unread and are now read
+            setNotifications([]);
 
             if (onNotificationUpdate) onNotificationUpdate();
         } catch (err) {
@@ -214,7 +241,7 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Bell size={20} />
-                    <h3 style={{ fontSize: '1rem', fontWeight: 'bold' }}>Notifications</h3>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 'bold' }}>New Notifications</h3>
                     {unreadCount > 0 && (
                         <span style={{
                             backgroundColor: 'var(--primary)',
@@ -288,7 +315,7 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                     <div style={{ padding: '32px', textAlign: 'center' }}>
                         <Bell size={32} color="var(--text-secondary)" style={{ opacity: 0.5, marginBottom: '8px' }} />
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                            No notifications yet
+                            You're all caught up!
                         </p>
                     </div>
                 ) : (

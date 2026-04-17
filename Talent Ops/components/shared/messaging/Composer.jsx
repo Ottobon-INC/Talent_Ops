@@ -48,8 +48,9 @@ const Composer = ({
     selectedConversation,
     onSendMessage,
     onSendPoll,
-    onFileAttachment,
-    orgUsers
+    orgUsers,
+    currentMembers,
+    currentUserId
 }) => {
     // ── Local state (owned by Composer) ──
     const [messageInput, setMessageInput] = useState('');
@@ -68,13 +69,20 @@ const Composer = ({
     
     // -- Optimized Mentions Logic --
     const isGroupOrOrg = selectedConversation?.type === 'team' || selectedConversation?.type === 'everyone';
+
+    // Use currentMembers for regular teams, orgUsers for the Company Chat (everyone)
+    const mentionSource = (selectedConversation?.type === 'everyone') ? orgUsers : (currentMembers || []);
     
-    const filteredUsers = (orgUsers && showMentions && isGroupOrOrg) 
-        ? orgUsers.filter(u => 
-            !mentionSearch.trim() || // Show all if search is empty
-            u.full_name?.toLowerCase().includes(mentionSearch.toLowerCase()) || 
-            u.email?.toLowerCase().includes(mentionSearch.toLowerCase())
-          ).slice(0, 8)
+    const filteredUsers = (mentionSource && showMentions && isGroupOrOrg) 
+        ? mentionSource.filter(u => {
+            const id = u.id || u.user_id;
+            // Don't show self in mentions
+            if (id === currentUserId) return false;
+            
+            return !mentionSearch.trim() || // Show all if search is empty
+            (u.full_name || u.name)?.toLowerCase().includes(mentionSearch.toLowerCase()) || 
+            u.email?.toLowerCase().includes(mentionSearch.toLowerCase());
+          }).slice(0, 8)
         : [];
 
     // ── Handlers ──
@@ -161,10 +169,12 @@ const Composer = ({
         const lastAtIndex = textBeforeCursor.lastIndexOf('@');
         
         if (lastAtIndex === -1) return;
-
+        
         const before = messageInput.substring(0, lastAtIndex);
         const after = messageInput.substring(cursorPos);
-        const mentionText = `@[${user.full_name || user.email}](${user.id}) `;
+        
+        // Use cleaner human-readable format: @[Name]
+        const mentionText = `@[${user.full_name || user.email}] `;
         
         setMessageInput(before + mentionText + after);
         setShowMentions(false);

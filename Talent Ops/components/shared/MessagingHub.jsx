@@ -439,22 +439,7 @@ const MessagingHub = () => {
                 }
             }
 
-            // Send notifications
-            try {
-                if (currentMembers.length > 0) {
-                    const currentProfile = orgUsers.find(u => u.id === currentUserId);
-                    const senderName = currentProfile?.full_name || 'Someone';
-                    const recipients = currentMembers.filter(m => (m.id || m.user_id) !== currentUserId).map(m => m.id || m.user_id);
-                    if (recipients.length > 0) {
-                        const msgPreview = content.trim()
-                            ? `${senderName}: ${content.substring(0, 50)}${content.length > 50 ? '...' : ''}`
-                            : `${senderName} sent an attachment`;
-                        sendBulkNotifications(recipients, currentUserId, senderName, msgPreview, 'message');
-                    }
-                }
-            } catch (notifError) {
-                console.error('Error sending notifications:', notifError);
-            }
+
 
             setReplyingTo(null);
             setMessages(prev => [...prev, newMessage]);
@@ -789,6 +774,8 @@ const MessagingHub = () => {
                         loading={loading}
                         selectedConversation={selectedConversation}
                         orgUsers={orgUsers}
+                        currentMembers={currentMembers}
+                        currentUserId={currentUserId}
                         onSendMessage={handleSendMessage}
                         onSendPoll={handleSendPoll}
                     />
