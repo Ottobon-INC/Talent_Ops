@@ -56,48 +56,17 @@ export const useBrowserNotification = (userId, onNewNotification = null) => {
                     console.log('[useBrowserNotification] Payload received:', payload);
                     const newNotification = payload.new;
 
-                    // Trigger callback for UI updates (e.g., updating unread count)
-                    // Use the ref to get the latest callback
+                    // IN-APP NOTIFICATION logic remains (callbackRef.current handles this)
                     if (callbackRef.current && typeof callbackRef.current === 'function') {
-                        console.log('[useBrowserNotification] invoking onNewNotification with:', newNotification);
                         callbackRef.current(newNotification);
                     }
 
-                    // Only show if permission is granted
+                    // Native browser notifications DISABLED to satisfy USER request ("use app only")
+                    /*
                     if (Notification.permission === "granted") {
-                        console.log('[useBrowserNotification] Triggering notification');
-                        const title = newNotification.sender_name
-                            ? `New Message from ${newNotification.sender_name}`
-                            : 'New Notification';
-
-                        const body = newNotification.message || 'You have received a new notification';
-
-                        try {
-                            // Play sound
-                            const audio = new Audio('/sound.mp3');
-                            audio.play().catch(e => console.log('Audio play failed', e));
-
-                            // Create notification
-                            const notification = new Notification(title, {
-                                body: body,
-                                icon: null,
-                                tag: newNotification.id, // prevents duplicates across tabs/calls
-                                silent: true, // silences the native browser chime
-                                renotify: true, // play sound/alert even if replacing a notification
-                                requireInteraction: true
-                            });
-
-                            // Optional: Focus window on click
-                            notification.onclick = function () {
-                                window.focus();
-                                this.close();
-                            };
-                        } catch (e) {
-                            console.error('[useBrowserNotification] Error creating notification:', e);
-                        }
-                    } else {
-                        console.log('[useBrowserNotification] Skipped notification because permission is:', Notification.permission);
+                        // ... code omitted
                     }
+                    */
                 }
             )
             .subscribe((status) => {

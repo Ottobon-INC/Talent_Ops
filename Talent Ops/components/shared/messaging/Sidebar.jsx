@@ -291,7 +291,7 @@ const Sidebar = ({
                             const lastReadTime = lastReadTimes[conv.id] || 0;
                             const isUnread = lastMsgTime > lastReadTime;
                             const lastMessage = conv.conversation_indexes?.[0]?.last_message || '';
-                            const isSentByMe = conv.conversation_indexes?.[0]?.last_sender_id === currentUserId;
+                            const isSentByMe = conv.conversation_indexes?.[0]?.last_sender_id === currentUserId || false;
 
                             return (
                                 <div

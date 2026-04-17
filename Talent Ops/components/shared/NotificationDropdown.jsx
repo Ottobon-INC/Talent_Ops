@@ -151,6 +151,8 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                 return '⏳';
             case 'task_deadline_near':
                 return '⏰';
+            case 'mention':
+                return '@';
             default:
                 return '🔔';
         }

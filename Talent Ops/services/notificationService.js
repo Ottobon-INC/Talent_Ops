@@ -129,3 +129,42 @@ export const markNotificationAsRead = async (notificationId) => {
         throw error;
     }
 };
+/**
+ * Marks message/mention notifications as read for a sender
+ * @param {string} userId - Current user receiving
+ * @param {string} senderId - The sender we are looking at
+ */
+export const markMessageNotificationsAsRead = async (userId, senderId) => {
+    try {
+        const { error } = await supabase
+            .from('notifications')
+            .update({ is_read: true })
+            .eq('receiver_id', userId)
+            .eq('sender_id', senderId)
+            .in('type', ['message', 'mention'])
+            .eq('is_read', false);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error marking message notifications as read:', error);
+    }
+};
+
+/**
+ * Marks all message and mention notifications as read for a user
+ * @param {string} userId - Current user ID
+ */
+export const markAllMessageNotificationsAsRead = async (userId) => {
+    try {
+        const { error } = await supabase
+            .from('notifications')
+            .update({ is_read: true })
+            .eq('receiver_id', userId)
+            .in('type', ['message', 'mention'])
+            .eq('is_read', false);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error marking all message notifications as read:', error);
+    }
+};
