@@ -129,6 +129,17 @@ const ChatWindow = ({
         }
     }, [messages, selectedConversation]);
 
+    // Close reaction picker on click outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (showReactionPicker && !event.target.closest('.message-actions-container')) {
+                setShowReactionPicker(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showReactionPicker]);
+
     // Helper
     const getSenderName = (senderId) => {
         const user = orgUsers.find(u => u.id === senderId);
@@ -451,17 +462,24 @@ const ChatWindow = ({
                                                 )}
 
                                                 {/* Message Actions Hover + Reaction Picker */}
-                                                {hoveredMessageId === msg.id && !msg.is_deleted && (
-                                                    <div style={{ position: 'absolute', top: '-32px', right: msg.sender_user_id === currentUserId ? '4px' : 'auto', left: msg.sender_user_id !== currentUserId ? '4px' : 'auto', zIndex: 100 }}>
+                                                {(hoveredMessageId === msg.id || showReactionPicker === msg.id) && !msg.is_deleted && (
+                                                    <div className="message-actions-container" style={{ 
+                                                        position: 'absolute', 
+                                                        top: '-42px', 
+                                                        right: msg.sender_user_id === currentUserId ? '4px' : 'auto', 
+                                                        left: msg.sender_user_id !== currentUserId ? '4px' : 'auto', 
+                                                        zIndex: 100,
+                                                        paddingBottom: '20px'
+                                                    }}>
                                                         {/* Reaction Picker Popup - above the action bar */}
                                                         {showReactionPicker === msg.id && (
                                                             <div style={{ position: 'absolute', bottom: '100%', right: msg.sender_user_id === currentUserId ? '0' : 'auto', left: msg.sender_user_id !== currentUserId ? '0' : 'auto', background: 'white', border: '1px solid #e5e7eb', borderRadius: '24px', padding: '6px 10px', display: 'flex', gap: '2px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', zIndex: 101, marginBottom: '6px', whiteSpace: 'nowrap' }}>
                                                                 {['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👏'].map(emoji => (
                                                                     <button key={emoji}
                                                                         onClick={(e) => { e.stopPropagation(); handleReaction(msg.id, emoji); }}
-                                                                        style={{ padding: '6px', background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', borderRadius: '50%', transition: 'all 0.15s', lineHeight: 1 }}
-                                                                        onMouseEnter={(e) => { e.target.style.transform = 'scale(1.3)'; e.target.style.background = '#f1f5f9'; }}
-                                                                        onMouseLeave={(e) => { e.target.style.transform = 'scale(1)'; e.target.style.background = 'none'; }}>
+                                                                        style={{ padding: '6px', background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', borderRadius: '50%', transition: 'all 0.1s ease', lineHeight: 1 }}
+                                                                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.3)'; e.currentTarget.style.background = '#f1f5f9'; }}
+                                                                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'none'; }}>
                                                                         {emoji}
                                                                     </button>
                                                                 ))}
