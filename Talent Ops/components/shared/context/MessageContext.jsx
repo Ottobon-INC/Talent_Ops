@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getConversationsByCategory, sendMessage, markAsReadInDB } from '../../../services/messageService';
-import { sendNotification } from '../../../services/notificationService';
+import { sendNotification, markAllMessageNotificationsAsRead } from '../../../services/notificationService';
 
 const messageAudio = new Audio('/sound.mp3');
 messageAudio.preload = 'auto';
@@ -224,7 +224,8 @@ export const MessageProvider = ({ children, addToast }) => {
 
     // Actions
     const markAsRead = (conversationId) => {
-        const now = Date.now();
+        // Use a small buffer to ensure we cover the latest message timestamp perfectly
+        const now = Date.now() + 500; 
         setLastReadTimes(prev => {
             const updated = { ...prev, [conversationId]: now };
             if (userId) localStorage.setItem(`message_read_times_${userId}`, JSON.stringify(updated));
@@ -233,6 +234,8 @@ export const MessageProvider = ({ children, addToast }) => {
 
         if (userId && conversationId) {
             markAsReadInDB(conversationId, userId);
+            // Also clear all message notifications for this user (Issue: Double notifications)
+            markAllMessageNotificationsAsRead(userId);
         }
     };
 

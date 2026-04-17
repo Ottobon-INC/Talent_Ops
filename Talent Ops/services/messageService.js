@@ -176,28 +176,10 @@ export const getConversationsByCategory = async (userId, category, orgId) => {
             }));
         }
 
-        // Step 6: Enrich with last_message_read_by_others flag (Issue: Blue ticks outside)
-        const { data: allMembers, error: membersError } = await supabase
-            .from('conversation_members')
-            .select('conversation_id, user_id, last_read_at')
-            .in('conversation_id', conversationIds);
-
-        if (!membersError && allMembers) {
-            conversationsWithIndexes.forEach(conv => {
-                const idx = conv.conversation_indexes?.[0];
-                if (idx && idx.last_sender_id === userId && idx.last_message_at) {
-                    const lastMsgTime = new Date(idx.last_message_at);
-                    const otherMembers = allMembers.filter(m => m.conversation_id === conv.id && m.user_id !== userId);
-                    
-                    // Mark as read if ANY other person has read past the last message time
-                    conv.last_message_read_by_others = otherMembers.some(m => 
-                        m.last_read_at && new Date(m.last_read_at) >= lastMsgTime
-                    );
-                } else {
-                    conv.last_message_read_by_others = false;
-                }
-            });
-        }
+        // Step 6: Enrich with read status (Disabled due to missing schema columns)
+        conversationsWithIndexes.forEach(conv => {
+            conv.last_message_read_by_others = false;
+        });
 
         return conversationsWithIndexes;
     } catch (error) {
@@ -287,17 +269,7 @@ export const sendMessage = async (conversationId, userId, content, files = [], o
         }
 
         // Support for @mentions (Issue 3)
-        const mentions = [];
-        if (content) {
-            const mentionRegex = /@\[([^\]]+)\]\(([^)]+)\)|@(\w+)/g;
-            let match;
-            while ((match = mentionRegex.exec(content)) !== null) {
-                const mentionedId = match[2] || match[3];
-                if (mentionedId && !mentions.includes(mentionedId)) {
-                    mentions.push(mentionedId);
-                }
-            }
-        }
+        const mentions = extractMentions(content);
 
         // Insert the message
         const { data: message, error: messageError } = await supabase
@@ -309,7 +281,6 @@ export const sendMessage = async (conversationId, userId, content, files = [], o
                 message_type: 'chat',
                 content: content || '',
                 org_id: orgId,
-                mentions: mentions, // Backend support for mentions
                 created_at: new Date().toISOString()
             })
             .select()
@@ -439,7 +410,6 @@ export const updateConversationIndex = async (conversationId, lastMessage, lastS
                     conversation_id: conversationId,
                     last_message: lastMessage,
                     last_message_at: new Date().toISOString(),
-                    last_sender_id: lastSenderId, // Store who sent the last message
                     updated_at: new Date().toISOString()
                 },
                 {
@@ -1204,7 +1174,10 @@ export const leaveConversation = async (conversationId, userId) => {
  */
 export const sendMessageWithReply = async (conversationId, content, senderId, replyToId = null, repliedContent = null, repliedSender = null, orgId = null) => {
     try {
-        const { data, error } = await supabase
+        // Extract mentions for database and notifications
+        const mentions = extractMentions(content);
+
+        const { data: message, error } = await supabase
             .from('messages')
             .insert([{
                 conversation_id: conversationId,
@@ -1213,7 +1186,8 @@ export const sendMessageWithReply = async (conversationId, content, senderId, re
                 reply_to: replyToId,
                 replied_message_content: repliedContent,
                 replied_message_sender_name: repliedSender,
-                org_id: orgId
+                org_id: orgId,
+                created_at: new Date().toISOString()
             }])
             .select()
             .single();
@@ -1221,13 +1195,70 @@ export const sendMessageWithReply = async (conversationId, content, senderId, re
         if (error) throw error;
 
         // Update conversation index to ensure sorting works
-        await updateConversationIndex(conversationId, content);
+        await updateConversationIndex(conversationId, content, senderId);
 
-        return data;
+        // Handle notifications (Mentions + Standard)
+        try {
+            const { data: convData } = await supabase.from('conversations').select('org_id').eq('id', conversationId).single();
+            const { data: senderProfile } = await supabase.from('profiles').select('full_name').eq('id', senderId).single();
+            const senderName = senderProfile?.full_name || 'Someone';
+
+            const { data: members } = await supabase
+                .from('conversation_members')
+                .select('user_id')
+                .eq('conversation_id', conversationId)
+                .neq('user_id', senderId);
+
+            if (members && members.length > 0) {
+                const recipients = members.map(m => m.user_id);
+                
+                // Track who gets notified to avoid double notifications
+                const notifiedUserIds = [];
+
+                // 1. Mention notifications (Higher priority)
+                if (mentions.length > 0) {
+                    const mentionRecipients = mentions.filter(id => recipients.includes(id));
+                    await Promise.all(mentionRecipients.map(id => {
+                        notifiedUserIds.push(id);
+                        return sendNotification(id, senderId, senderName, `Mentioned you: ${content.substring(0, 50)}`, 'mention', convData?.org_id || orgId);
+                    }));
+                }
+
+                // 2. Standard message notifications
+                const standardRecipients = recipients.filter(id => !notifiedUserIds.includes(id));
+                if (standardRecipients.length > 0) {
+                    await Promise.all(standardRecipients.map(id => 
+                        sendNotification(id, senderId, senderName, content || 'Sent a reply', 'message', convData?.org_id || orgId)
+                    ));
+                }
+            }
+        } catch (notifyError) {
+            console.warn('Non-fatal: Failed to send reply notifications', notifyError);
+        }
+
+        return message;
     } catch (error) {
         console.error('Error sending message with reply:', error);
         throw error;
     }
+};
+
+/**
+ * Helper to extract user IDs from mentions in message content
+ * Supports both raw @email/@name and formatted @[Name](ID)
+ */
+const extractMentions = (content) => {
+    if (!content) return [];
+    const mentions = [];
+    const mentionRegex = /@\[([^\]]+)\]\(([^)]+)\)|@(\w+)/g;
+    let match;
+    while ((match = mentionRegex.exec(content)) !== null) {
+        const mentionedId = match[2] || match[3];
+        if (mentionedId && !mentions.includes(mentionedId)) {
+            mentions.push(mentionedId);
+        }
+    }
+    return mentions;
 };
 
 /**
