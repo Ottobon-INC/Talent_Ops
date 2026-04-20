@@ -32,16 +32,21 @@ import {
     hydrateMessage,
     deleteMessageForEveryone,
     deleteMessageForMe,
-    getConversationMemberIds
+    getConversationMemberIds,
+    editMessage,
+    updateConversationIndex
 } from '../../services/messageService';
 import { sendNotification, sendBulkNotifications } from '../../services/notificationService';
 import { useMessages } from './context/MessageContext';
+import { supabase } from '../../lib/supabaseClient';
 import './MessagingHub.css';
 
 // Child components
 import Sidebar from './messaging/Sidebar';
 import ChatWindow from './messaging/ChatWindow';
 import Composer from './messaging/Composer';
+
+const READ_RECEIPT_SKEW_MS = 5000;
 
 const MessagingHub = () => {
     // ══════════════════════════════════════════════
@@ -60,7 +65,7 @@ const MessagingHub = () => {
     const [errorMessage, setErrorMessage] = useState(null);
     const [selectedUser, setSelectedUser] = useState(null);
     const [authLoading, setAuthLoading] = useState(true);
-    const { markAsRead, lastReadTimes, lastIncomingMessage } = useMessages();
+    const { markAsRead, lastReadTimes, lastIncomingMessage, lastMemberReadUpdate } = useMessages();
     const [currentMembers, setCurrentMembers] = useState([]);
     const [isCurrentUserAdmin, setIsCurrentUserAdmin] = useState(false);
 
@@ -122,6 +127,66 @@ const MessagingHub = () => {
         selectedConversationRef.current = selectedConversation;
     }, [selectedConversation]);
 
+    const isReadAtOrAfterMessage = (readAt, messageAt) => {
+        if (!readAt || !messageAt) return false;
+        return new Date(readAt).getTime() + READ_RECEIPT_SKEW_MS >= new Date(messageAt).getTime();
+    };
+
+    const syncConversationReadState = (conversationId, readerId, readAt) => {
+        setConversations(prevConvs => prevConvs.map(c => {
+            if (c.id !== conversationId) return c;
+
+            const index = c.conversation_indexes?.[0];
+            const isLastMessageMine = index?.last_sender_id === currentUserIdRef.current;
+            const wasRead = isLastMessageMine && readerId !== currentUserIdRef.current && isReadAtOrAfterMessage(readAt, index?.last_message_at);
+
+            return {
+                ...c,
+                last_message_read_by_others: wasRead
+            };
+        }));
+    };
+
+    const syncVisibleMessageReadState = (conversationId, readerId, readAt) => {
+        setMessages(prevMessages => prevMessages.map(msg => {
+            if (selectedConversationRef.current?.id !== conversationId) return msg;
+            if (msg.sender_user_id !== currentUserIdRef.current) return msg;
+
+            const wasRead = readerId !== currentUserIdRef.current && isReadAtOrAfterMessage(readAt, msg.created_at);
+            if (!wasRead) return msg;
+
+            const existingSeenBy = Array.isArray(msg.seen_by) ? msg.seen_by : [];
+            const alreadyTracked = existingSeenBy.some(seen => seen.user_id === readerId);
+            const nextSeenBy = alreadyTracked
+                ? existingSeenBy.map(seen => seen.user_id === readerId ? { ...seen, seen_at: readAt } : seen)
+                : [...existingSeenBy, { user_id: readerId, name: 'Seen', seen_at: readAt }];
+
+            return {
+                ...msg,
+                is_read_by_others: true,
+                seen_by: nextSeenBy
+            };
+        }));
+    };
+
+    const syncSelectedConversationMessages = async (conversationId) => {
+        try {
+            const msgs = await getConversationMessages(conversationId, currentUserOrgId);
+            setMessages(msgs);
+
+            const latestMessage = msgs[msgs.length - 1];
+            if (latestMessage?.sender_user_id === currentUserIdRef.current) {
+                setConversations(prevConvs => prevConvs.map(c =>
+                    c.id === conversationId
+                        ? { ...c, last_message_read_by_others: Boolean(latestMessage.is_read_by_others) }
+                        : c
+                ));
+            }
+        } catch (err) {
+            console.error('Failed to sync active chat:', err);
+        }
+    };
+
     useEffect(() => {
         if (lastIncomingMessage && currentUserId) {
             setConversationCache(prev => {
@@ -134,9 +199,7 @@ const MessagingHub = () => {
             // INSTANT SYNC: If the message belongs to the current chat window, fetch the messages
             const activeConv = selectedConversationRef.current;
             if (activeConv && activeConv.id === lastIncomingMessage.conversation_id) {
-                getConversationMessages(activeConv.id, currentUserOrgId).then(msgs => {
-                    setMessages(msgs);
-                }).catch(err => console.error('Failed to sync active chat:', err));
+                syncSelectedConversationMessages(activeConv.id);
                 markAsRead(activeConv.id);
             }
         }
@@ -155,6 +218,74 @@ const MessagingHub = () => {
             loadConversations();
         }
     }, [orgUsers]);
+
+    // ── Poll for read receipts: check if receiver has seen messages in the open chat ──
+    // This is required because Supabase filtered realtime subscriptions on conversation_members
+    // require REPLICA IDENTITY FULL which may not be configured.
+    useEffect(() => {
+        if (!selectedConversation?.id || !currentUserId) return;
+
+        const convId = selectedConversation.id;
+        let lastKnownReadAt = null;
+
+        const checkReadStatus = async () => {
+            try {
+                const { data: members } = await supabase
+                    .from('conversation_members')
+                    .select('user_id, last_read_at')
+                    .eq('conversation_id', convId)
+                    .neq('user_id', currentUserId);
+
+                if (!members || members.length === 0) return;
+
+                // Find the latest read timestamp among all OTHER members
+                const latestRead = members.reduce((max, m) => {
+                    if (!m.last_read_at) return max;
+                    const t = new Date(m.last_read_at).getTime();
+                    return t > max ? t : max;
+                }, 0);
+
+                // Only refresh messages if the read timestamp has advanced since last check
+                if (latestRead > 0 && latestRead !== lastKnownReadAt) {
+                    lastKnownReadAt = latestRead;
+                    await syncSelectedConversationMessages(convId);
+
+                    const readerWithLatestTimestamp = members.find(m => new Date(m.last_read_at || 0).getTime() === latestRead);
+                    if (readerWithLatestTimestamp?.user_id) {
+                        syncConversationReadState(convId, readerWithLatestTimestamp.user_id, readerWithLatestTimestamp.last_read_at);
+                        syncVisibleMessageReadState(convId, readerWithLatestTimestamp.user_id, readerWithLatestTimestamp.last_read_at);
+                    }
+                }
+            } catch (err) {
+                console.error('Error polling read status:', err);
+            }
+        };
+
+        // Poll every 5 seconds while this conversation is open
+        const interval = setInterval(checkReadStatus, 5000);
+        // Also run immediately when conversation opens
+        checkReadStatus();
+
+        return () => clearInterval(interval);
+    }, [selectedConversation?.id, currentUserId]);
+
+    useEffect(() => {
+        if (!lastMemberReadUpdate?.conversation_id || !selectedConversation?.id) return;
+        if (lastMemberReadUpdate.conversation_id !== selectedConversation.id) return;
+        if (lastMemberReadUpdate.user_id === currentUserId) return;
+
+        syncConversationReadState(
+            lastMemberReadUpdate.conversation_id,
+            lastMemberReadUpdate.user_id,
+            lastMemberReadUpdate.last_read_at
+        );
+        syncVisibleMessageReadState(
+            lastMemberReadUpdate.conversation_id,
+            lastMemberReadUpdate.user_id,
+            lastMemberReadUpdate.last_read_at
+        );
+        syncSelectedConversationMessages(lastMemberReadUpdate.conversation_id);
+    }, [lastMemberReadUpdate, selectedConversation?.id, currentUserId]);
 
     // Subscribe to real-time updates for selected conversation
     const currentUserIdRef = useRef(currentUserId);
@@ -185,7 +316,16 @@ const MessagingHub = () => {
                             setConversations(prevConvs => {
                                 const updated = prevConvs.map(c => {
                                     if (c.id === convId) {
-                                        return { ...c, conversation_indexes: [{ last_message: fullMsg.content || '📎 Attachment', last_message_at: fullMsg.created_at }] };
+                                        return {
+                                            ...c,
+                                            conversation_indexes: [{
+                                                ...(c.conversation_indexes?.[0] || {}),
+                                                last_message: fullMsg.content || 'Attachment',
+                                                last_message_at: fullMsg.created_at,
+                                                last_sender_id: fullMsg.sender_user_id
+                                            }],
+                                            last_message_read_by_others: false
+                                        };
                                     }
                                     return c;
                                 });
@@ -230,6 +370,14 @@ const MessagingHub = () => {
                 },
                 onPollUpdate: (payload) => {
                     if (payload.message_id) fetchPollVotes(payload.message_id);
+                },
+                onReadReceipt: (payload) => {
+                    console.log('Realtime read receipt received:', payload);
+                    if (payload.user_id !== currentUserIdRef.current) {
+                        syncConversationReadState(convId, payload.user_id, payload.last_read_at);
+                        syncVisibleMessageReadState(convId, payload.user_id, payload.last_read_at);
+                        syncSelectedConversationMessages(convId);
+                    }
                 },
                 onPresence: (presenceState) => {
                     const typingUsers = [];
@@ -322,6 +470,14 @@ const MessagingHub = () => {
         try {
             const msgs = await getConversationMessages(conversation.id, currentUserOrgId);
             setMessages(msgs);
+            const latestMessage = msgs[msgs.length - 1];
+            if (latestMessage?.sender_user_id === currentUserId) {
+                setConversations(prevConvs => prevConvs.map(c =>
+                    c.id === conversation.id
+                        ? { ...c, last_message_read_by_others: Boolean(latestMessage.is_read_by_others) }
+                        : c
+                ));
+            }
             msgs.filter(m => m.is_poll).forEach(m => fetchPollVotes(m.id));
             const reactionsMap = {};
             msgs.forEach(msg => {
@@ -430,10 +586,13 @@ const MessagingHub = () => {
 
             if (attachmentFiles.length > 0) {
                 try {
-                    await Promise.all(attachmentFiles.map(file => uploadAttachment(file, targetConversationId, newMessage.id)));
+                    await Promise.all(attachmentFiles.map(file => uploadAttachment(file, targetConversationId, newMessage.id, currentUserOrgId)));
                     // Re-hydrate message to include the uploaded attachments
                     const hydrated = await hydrateMessage(newMessage.id);
                     if (hydrated) newMessage = hydrated;
+                    if (!content.trim()) {
+                        await updateConversationIndex(targetConversationId, 'Attachment', currentUserId);
+                    }
                 } catch (attachmentError) {
                     console.error('Error uploading attachments:', attachmentError);
                 }
@@ -451,7 +610,16 @@ const MessagingHub = () => {
             setConversations(prevConvs => {
                 const updated = prevConvs.map(c => {
                     if (c.id === targetConversationId) {
-                        return { ...c, conversation_indexes: [{ last_message: content.trim() || '📎 Attachment', last_message_at: newMessage.created_at || new Date().toISOString() }] };
+                        return { 
+                            ...c,
+                            conversation_indexes: [{ 
+                                ...(c.conversation_indexes?.[0] || {}),
+                                last_message: content.trim() || '📎 Attachment', 
+                                last_message_at: newMessage?.created_at || new Date().toISOString(),
+                                last_sender_id: currentUserId
+                            }],
+                            last_message_read_by_others: false 
+                        };
                     }
                     return c;
                 });
@@ -522,7 +690,7 @@ const MessagingHub = () => {
         });
 
         try {
-            await toggleReaction(messageId, currentUserId, reaction);
+            await toggleReaction(messageId, currentUserId, reaction, currentUserOrgId);
         } catch (error) {
             console.error('Error toggling reaction:', error);
             const summary = await getReactionSummary(messageId);
@@ -786,3 +954,5 @@ const MessagingHub = () => {
 };
 
 export default MessagingHub;
+
+

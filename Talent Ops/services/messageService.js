@@ -1,10 +1,11 @@
 import { supabase } from '../lib/supabaseClient';
-import { sendNotification } from './notificationService';
 
 /**
  * Message Service
  * Handles all messaging-related operations with Supabase
  */
+
+const READ_RECEIPT_SKEW_MS = 5000;
 
 // ══════════════════════════════════════════════
 //  AUTH & PROFILE HELPERS
@@ -176,10 +177,63 @@ export const getConversationsByCategory = async (userId, category, orgId) => {
             }));
         }
 
-        // Step 6: Enrich with read status (Disabled due to missing schema columns)
-        conversationsWithIndexes.forEach(conv => {
-            conv.last_message_read_by_others = false;
-        });
+        // Step 6: Enrich with read status
+        try {
+            // Fetch members and their last_read_at for all these conversations
+            const { data: allMembers } = await supabase
+                .from('conversation_members')
+                .select('conversation_id, user_id, last_read_at')
+                .in('conversation_id', conversationsWithIndexes.map(c => c.id));
+
+            conversationsWithIndexes.forEach(conv => {
+                const lastMsgAt = conv.conversation_indexes?.[0]?.last_message_at;
+                const lastSenderId = conv.conversation_indexes?.[0]?.last_sender_id;
+
+                if (lastMsgAt && lastSenderId === userId) {
+                    // For DMs and Teams, check if ANYONE ELSE has read up to lastMsgAt
+                    // (Skip for 'everyone' chat to avoid performance issues/noise)
+                    if (conv.type !== 'everyone') {
+                        const othersRead = allMembers?.filter(m => 
+                            m.conversation_id === conv.id && 
+                            m.user_id !== userId && 
+                            m.last_read_at && 
+                            (new Date(m.last_read_at).getTime() + READ_RECEIPT_SKEW_MS >= new Date(lastMsgAt).getTime())
+                        );
+                        conv.last_message_read_by_others = (othersRead && othersRead.length > 0);
+                    } else {
+                        conv.last_message_read_by_others = false;
+                    }
+                } else {
+                    conv.last_message_read_by_others = false;
+                }
+            });
+
+            // Step 7: Fetch exact unread counts
+            await Promise.all(conversationsWithIndexes.map(async (conv) => {
+                const myMember = allMembers?.find(m => m.conversation_id === conv.id && m.user_id === userId);
+                const lastRead = myMember?.last_read_at ? new Date(myMember.last_read_at).getTime() : 0;
+                const lastMsgTime = conv.conversation_indexes?.[0]?.last_message_at ? new Date(conv.conversation_indexes[0].last_message_at).getTime() : 0;
+                
+                if (lastMsgTime > lastRead && conv.conversation_indexes?.[0]?.last_sender_id !== userId) {
+                    const { count } = await supabase
+                        .from('messages')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('conversation_id', conv.id)
+                        .gt('created_at', new Date(lastRead).toISOString())
+                        .neq('sender_user_id', userId);
+                    conv.unread_count = count || 0;
+                } else {
+                    conv.unread_count = 0;
+                }
+            }));
+
+        } catch (enrichError) {
+            console.error('Error enriching conversations with read status:', enrichError);
+            conversationsWithIndexes.forEach(conv => {
+                conv.last_message_read_by_others = false;
+                conv.unread_count = 0;
+            });
+        }
 
         return conversationsWithIndexes;
     } catch (error) {
@@ -232,7 +286,7 @@ export const getConversationMessages = async (conversationId, orgId = null) => {
         // 3. Enrich messages with read status metadata
         const enrichedMessages = messages.map(msg => {
             const seenBy = (members || [])
-                .filter(m => m.user_id !== msg.sender_user_id && m.last_read_at && new Date(m.last_read_at) >= new Date(msg.created_at))
+                .filter(m => m.user_id !== msg.sender_user_id && m.last_read_at && (new Date(m.last_read_at).getTime() + READ_RECEIPT_SKEW_MS >= new Date(msg.created_at).getTime()))
                 .map(m => ({
                     user_id: m.user_id,
                     name: m.profiles?.full_name || 'User',
@@ -268,11 +322,6 @@ export const sendMessage = async (conversationId, userId, content, files = [], o
             throw new Error('Message content or files required');
         }
 
-        // Support for @mentions (Issue 3)
-        // Fetch members to resolve name-based mentions
-        const membersForMentions = await getConversationMembers(conversationId);
-        const mentions = extractMentions(content, membersForMentions);
-
         // Insert the message
         const { data: message, error: messageError } = await supabase
             .from('messages')
@@ -301,42 +350,8 @@ export const sendMessage = async (conversationId, userId, content, files = [], o
         const indexMessage = content || (files && files.length > 0 ? '📎 Attachment' : '');
         await updateConversationIndex(conversationId, indexMessage, userId);
 
-        // Send notifications
-        try {
-            const { data: convData } = await supabase.from('conversations').select('org_id').eq('id', conversationId).single();
-            const { data: senderProfile } = await supabase.from('profiles').select('full_name').eq('id', userId).single();
-            const senderName = senderProfile?.full_name || 'Someone';
-
-            // Get all recipients (excluding sender)
-            // Use already fetched members list for performance
-            const recipientsList = membersForMentions.filter(m => m.user_id !== userId);
-
-            if (recipientsList && recipientsList.length > 0) {
-                const recipients = recipientsList.map(m => m.user_id || m.id);
-                
-                // 1. If someone is mentioned, ONLY notify mentioned users
-                if (mentions.length > 0) {
-                   const mentionRecipients = mentions.filter(id => recipients.includes(id));
-                   await Promise.all(mentionRecipients.map(id => 
-                       sendNotification(id, userId, senderName, `Mentioned you: ${content.substring(0, 50)}`, 'mention', convData?.org_id)
-                   ));
-                } else {
-                    // 2. Otherwise notify everyone
-                    await Promise.all(recipients.map(recipientId =>
-                        sendNotification(
-                            recipientId,
-                            userId,
-                            senderName,
-                            content || 'Sent an attachment',
-                            'message',
-                            convData?.org_id
-                        )
-                    ));
-                }
-            }
-        } catch (notifyError) {
-            console.warn('Non-fatal: Failed to send message notifications', notifyError);
-        }
+        // Message notifications are handled by the database trigger.
+        // Keeping client-side inserts here causes duplicate notifications.
 
         return message;
     } catch (error) {
@@ -408,6 +423,7 @@ export const updateConversationIndex = async (conversationId, lastMessage, lastS
                 {
                     conversation_id: conversationId,
                     last_message: lastMessage,
+                    last_sender_id: lastSenderId,
                     last_message_at: new Date().toISOString(),
                     updated_at: new Date().toISOString()
                 },
@@ -658,6 +674,18 @@ export const subscribeToConversation = (conversationId, callbacks) => {
             },
             (payload) => {
                 if (onPollUpdate) onPollUpdate(payload.new || payload.old);
+            }
+        )
+        .on(
+            'postgres_changes',
+            {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'conversation_members',
+                filter: `conversation_id=eq.${conversationId}`
+            },
+            (payload) => {
+                if (callbacks.onReadReceipt) callbacks.onReadReceipt(payload.new);
             }
         );
 
@@ -1173,9 +1201,6 @@ export const leaveConversation = async (conversationId, userId) => {
  */
 export const sendMessageWithReply = async (conversationId, content, senderId, replyToId = null, repliedContent = null, repliedSender = null, orgId = null) => {
     try {
-        // Extract mentions for database and notifications
-        const mentions = extractMentions(content);
-
         const { data: message, error } = await supabase
             .from('messages')
             .insert([{
@@ -1194,38 +1219,11 @@ export const sendMessageWithReply = async (conversationId, content, senderId, re
         if (error) throw error;
 
         // Update conversation index to ensure sorting works
-        await updateConversationIndex(conversationId, content, senderId);
+        const previewText = content?.trim() || 'Attachment';
+        await updateConversationIndex(conversationId, previewText, senderId);
 
-        // Handle notifications (Mentions + Standard)
-        try {
-            const { data: convData } = await supabase.from('conversations').select('org_id').eq('id', conversationId).single();
-            const { data: senderProfile } = await supabase.from('profiles').select('full_name').eq('id', senderId).single();
-            const senderName = senderProfile?.full_name || 'Someone';
-
-            // Support for @mentions (Issue 3)
-            // Fetch members to resolve name-based mentions
-            const membersList = await getConversationMembers(conversationId);
-            const mentions = extractMentions(content, membersList);
-            
-            if (membersList && membersList.length > 0) {
-                const recipients = membersList.filter(m => m.user_id !== senderId).map(m => m.user_id || m.id);
-                
-                // 1. If someone is mentioned, ONLY notify mentioned users
-                if (mentions.length > 0) {
-                    const mentionRecipients = mentions.filter(id => recipients.includes(id));
-                    await Promise.all(mentionRecipients.map(id => 
-                        sendNotification(id, senderId, senderName, `Mentioned you: ${content.substring(0, 50)}`, 'mention', convData?.org_id || orgId)
-                    ));
-                } else {
-                    // 2. Otherwise, send standard message notifications to all members
-                    await Promise.all(recipients.map(id => 
-                        sendNotification(id, senderId, senderName, content || 'Sent a reply', 'message', convData?.org_id || orgId)
-                    ));
-                }
-            }
-        } catch (notifyError) {
-            console.warn('Non-fatal: Failed to send reply notifications', notifyError);
-        }
+        // Message notifications are handled by the database trigger.
+        // Keeping client-side inserts here causes duplicate notifications.
 
         return message;
     } catch (error) {

@@ -21,6 +21,7 @@ import PricingPage from './landing/sections/PricingPage';
 import { StylesInjection } from './landing/styles/StylesInjection';
 
 function App() {
+    console.log('App Initializing...');
 
 
     return (

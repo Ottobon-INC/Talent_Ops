@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabaseClient';
 
 
 export const LoginPage = () => {
+    console.log('LoginPage Mounting...');
     const navigate = useNavigate();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');

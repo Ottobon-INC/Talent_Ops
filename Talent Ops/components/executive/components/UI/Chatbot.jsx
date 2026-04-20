@@ -22,7 +22,7 @@ const Chatbot = () => {
     // Dragging state
     const [position, setPosition] = useState(() => {
         const saved = localStorage.getItem('chatbot-position');
-        return saved ? JSON.parse(saved) : { bottom: 30, right: 30 };
+        return saved ? JSON.parse(saved) : { bottom: 40, right: 40 };
     });
     const [isDragging, setIsDragging] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -532,8 +532,8 @@ const Chatbot = () => {
                 onMouseDown={handleMouseDown}
                 onClick={() => !isDragging && setIsOpen(!isOpen)}
                 style={{
-                    width: '64px',
-                    height: '64px',
+                    width: '56px',
+                    height: '56px',
                     borderRadius: '50%',
                     background: 'linear-gradient(135deg, var(--accent) 0%, var(--primary) 100%)',
                     color: 'white',

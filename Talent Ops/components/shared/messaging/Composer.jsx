@@ -2,6 +2,17 @@ import React, { useState, useRef } from 'react';
 import { Paperclip, Send, X, Plus, Trash2, BarChart2, Smile, ChevronDown } from 'lucide-react';
 import UserAvatar from '../UserAvatar';
 
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_ATTACHMENT_TYPES = new Set([
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif'
+]);
+
 const COMMON_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👏', '✅', '❌', '🚀', '⭐', '👋', '🙏', '💯', '🤔'];
 
 const EmojiPicker = ({ onEmojiClick, onClose }) => (
@@ -84,6 +95,35 @@ const Composer = ({
             u.email?.toLowerCase().includes(mentionSearch.toLowerCase());
           }).slice(0, 8)
         : [];
+
+    const validateFiles = (files) => {
+        const accepted = [];
+        const rejected = [];
+
+        files.forEach((file) => {
+            const isAllowedType = ALLOWED_ATTACHMENT_TYPES.has(file.type);
+            const isAllowedSize = file.size <= MAX_ATTACHMENT_SIZE_BYTES;
+
+            if (isAllowedType && isAllowedSize) {
+                accepted.push(file);
+                return;
+            }
+
+            if (!isAllowedType) {
+                rejected.push(`${file.name} is not a supported file type`);
+            } else {
+                rejected.push(`${file.name} is larger than 10 MB`);
+            }
+        });
+
+        if (rejected.length > 0) {
+            setErrorMessage(rejected.join('. '));
+        } else {
+            setErrorMessage(null);
+        }
+
+        return accepted;
+    };
 
     // ── Handlers ──
     const handleTextareaChange = (e) => {
@@ -201,14 +241,18 @@ const Composer = ({
             }
         }
         if (files.length > 0) {
-            setAttachments(prev => [...prev, ...files]);
+            const validFiles = validateFiles(files);
+            if (validFiles.length > 0) {
+                setAttachments(prev => [...prev, ...validFiles]);
+            }
         }
     };
 
     const handleFileAttachment = (e) => {
-        const files = Array.from(e.target.files);
-        if (files.length > 0) {
-            setAttachments(prev => [...prev, ...files]);
+        const files = Array.from(e.target.files || []);
+        const validFiles = validateFiles(files);
+        if (validFiles.length > 0) {
+            setAttachments(prev => [...prev, ...validFiles]);
         }
         // Reset input to allow re-selecting the same file
         e.target.value = '';
@@ -386,6 +430,7 @@ const Composer = ({
                         <input
                             type="file"
                             multiple
+                            accept=".pdf,.doc,.docx,image/png,image/jpeg,image/webp,image/gif"
                             onChange={handleFileAttachment}
                             style={{ display: 'none' }}
                         />
