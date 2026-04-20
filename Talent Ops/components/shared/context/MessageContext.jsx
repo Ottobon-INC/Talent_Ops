@@ -1,8 +1,8 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getConversationsByCategory, sendMessage, markAsReadInDB } from '../../../services/messageService';
-import { sendNotification, markAllMessageNotificationsAsRead } from '../../../services/notificationService';
+import { markAllMessageNotificationsAsRead } from '../../../services/notificationService';
 
 const messageAudio = new Audio('/sound.mp3');
 messageAudio.preload = 'auto';
@@ -19,9 +19,23 @@ export const MessageProvider = ({ children, addToast }) => {
     const [userId, setUserId] = useState(null);
     const [notificationQueue, setNotificationQueue] = useState([]);
     const [lastIncomingMessage, setLastIncomingMessage] = useState(null);
+    const [lastMemberReadUpdate, setLastMemberReadUpdate] = useState(null);
+    const handledNotificationsRef = useRef(new Set());
+    const suppressedNotificationsRef = useRef(new Set());
 
     const navigate = useNavigate();
     const location = useLocation();
+
+    const getSuppressedStorageKey = (nextUserId) => `message_suppressed_notifications_${nextUserId}`;
+
+    const persistSuppressedNotification = (notificationId) => {
+        if (!userId || !notificationId) return;
+
+        suppressedNotificationsRef.current.add(notificationId);
+        const trimmed = Array.from(suppressedNotificationsRef.current).slice(-200);
+        suppressedNotificationsRef.current = new Set(trimmed);
+        localStorage.setItem(getSuppressedStorageKey(userId), JSON.stringify(trimmed));
+    };
 
     // 1. Auth Change Listener
     useEffect(() => {
@@ -57,6 +71,18 @@ export const MessageProvider = ({ children, addToast }) => {
                 console.error('Failed to parse read times', e);
             }
         }
+
+        const suppressedStored = localStorage.getItem(getSuppressedStorageKey(userId));
+        if (suppressedStored) {
+            try {
+                suppressedNotificationsRef.current = new Set(JSON.parse(suppressedStored));
+            } catch (e) {
+                console.error('Failed to parse suppressed notifications', e);
+                suppressedNotificationsRef.current = new Set();
+            }
+        } else {
+            suppressedNotificationsRef.current = new Set();
+        }
     }, [userId]);
 
     // 3. Request Notification Permissions
@@ -72,21 +98,59 @@ export const MessageProvider = ({ children, addToast }) => {
         try {
             const { data: memberships } = await supabase
                 .from('conversation_members')
-                .select('conversation_id')
+                .select('conversation_id, last_read_at')
                 .eq('user_id', userId);
 
             if (!memberships?.length) return [];
+
+            // Sync lastReadTimes with DB values
+            const updatedLastReadTimes = { ...lastReadTimes };
+            let hasChanges = false;
+            memberships.forEach(m => {
+                if (m.last_read_at) {
+                    const dbTime = new Date(m.last_read_at).getTime();
+                    if (!updatedLastReadTimes[m.conversation_id] || dbTime > updatedLastReadTimes[m.conversation_id]) {
+                        updatedLastReadTimes[m.conversation_id] = dbTime;
+                        hasChanges = true;
+                    }
+                }
+            });
+
+            if (hasChanges) {
+                setLastReadTimes(updatedLastReadTimes);
+                localStorage.setItem(`message_read_times_${userId}`, JSON.stringify(updatedLastReadTimes));
+            }
 
             const conversationIds = memberships.map(m => m.conversation_id);
 
             const { data: convs, error } = await supabase
                 .from('conversations')
-                .select(`id, type, name, conversation_indexes(last_message, last_message_at)`)
+                .select(`id, type, name, conversation_indexes(last_message, last_message_at, last_sender_id)`)
                 .in('id', conversationIds);
 
             if (error) throw error;
-            setConversations(convs || []);
-            return convs || [];
+
+            // Fetch exact unread counts for conversations that seem unread
+            const convsWithCounts = await Promise.all((convs || []).map(async (conv) => {
+                const index = conv.conversation_indexes?.[0];
+                const lastRead = updatedLastReadTimes[conv.id] || 0;
+                const lastMsgTime = index?.last_message_at ? new Date(index.last_message_at).getTime() : 0;
+                
+                if (lastMsgTime > lastRead && index?.last_sender_id !== userId) {
+                    const { count, error: countError } = await supabase
+                        .from('messages')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('conversation_id', conv.id)
+                        .gt('created_at', new Date(lastRead).toISOString())
+                        .neq('sender_user_id', userId);
+                    
+                    return { ...conv, unread_count: count || 0 };
+                }
+                return { ...conv, unread_count: 0 };
+            }));
+
+            setConversations(convsWithCounts);
+            return convsWithCounts;
         } catch (err) {
             console.error('Error fetching conversations:', err);
             return [];
@@ -115,8 +179,17 @@ export const MessageProvider = ({ children, addToast }) => {
                     filter: `type=eq.message`
                 },
                 async (payload) => {
-                    // Make sure it's meant for this user
+                    // Make sure it's meant for this user and not already handled
                     if (payload.new.receiver_id !== userId) return;
+                    if (handledNotificationsRef.current.has(payload.new.id)) return;
+                    if (suppressedNotificationsRef.current.has(payload.new.id)) return;
+                    
+                    handledNotificationsRef.current.add(payload.new.id);
+                    // Keep the set size manageable
+                    if (handledNotificationsRef.current.size > 50) {
+                        const firstItem = handledNotificationsRef.current.values().next().value;
+                        handledNotificationsRef.current.delete(firstItem);
+                    }
 
                     console.log('📬 Real-time message received:', payload);
 
@@ -166,32 +239,32 @@ export const MessageProvider = ({ children, addToast }) => {
                         timestamp: Date.now()
                     };
 
-                    addNotification(newNotification);
+                    // If the user is already inside the messaging area, don't show popup cards again.
+                    if (location.pathname.includes('/messages')) {
+                        persistSuppressedNotification(payload.new.id);
+                    } else {
+                        addNotification(newNotification);
+                    }
                     setLastIncomingMessage({ 
                         id: payload.new.id, 
                         conversation_id: conversationId,
                         timestamp: Date.now() 
                     });
 
-                    // Optional Legacy Toast
-                    if (addToast) {
-                        if (conversationId) {
-                            const { data: myProfile } = await supabase.from('profiles').select('full_name').eq('id', userId).single();
-                            const myName = myProfile?.full_name || 'Someone';
-                            addToast(displayMessage, 'message_reply', {
-                                sender: { name: payload.new.sender_name || 'User', avatar_url: senderAvatar },
-                                action: {
-                                    onReply: async (text) => {
-                                        await sendMessage(conversationId, userId, text);
-                                        await sendNotification(senderId, userId, myName, text, 'message');
-                                    }
-                                }
-                            });
-                        } else {
-                            addToast(displayMessage, 'info', { label: 'View', onClick: () => navigate('/messages') });
-                        }
-                    }
-
+                }
+            )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'conversation_members'
+                },
+                (payload) => {
+                    console.log('👀 Member read status updated:', payload);
+                    fetchConversations();
+                    // Signal MessagingHub to refresh open chat's message read status
+                    setLastMemberReadUpdate({ conversation_id: payload.new?.conversation_id, user_id: payload.new?.user_id, last_read_at: payload.new?.last_read_at, _t: Date.now() });
                 }
             )
             .subscribe();
@@ -199,7 +272,7 @@ export const MessageProvider = ({ children, addToast }) => {
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [userId, addToast, navigate]); 
+    }, [userId, location.pathname]); 
 
     // 7. Calculate Unread Count
     useEffect(() => {
@@ -216,7 +289,7 @@ export const MessageProvider = ({ children, addToast }) => {
             const lastMsgTime = new Date(index.last_message_at).getTime();
             const lastReadTime = lastReadTimes[conv.id] || 0;
 
-            if (lastMsgTime > lastReadTime) count++;
+            if (lastMsgTime > lastReadTime && index.last_sender_id !== userId) count++;
         });
 
         if (hasValidIndexes) setUnreadCount(count);
@@ -237,13 +310,24 @@ export const MessageProvider = ({ children, addToast }) => {
             // Also clear all message notifications for this user (Issue: Double notifications)
             markAllMessageNotificationsAsRead(userId);
         }
+
+        setNotificationQueue(prev => {
+            prev.forEach(notification => {
+                if (!conversationId || notification.conversation_id === conversationId) {
+                    persistSuppressedNotification(notification.id);
+                }
+            });
+            return prev.filter(notification => notification.conversation_id !== conversationId);
+        });
     };
 
     const addNotification = (notification) => {
+        if (!notification?.id || suppressedNotificationsRef.current.has(notification.id)) return;
         setNotificationQueue(prev => [notification, ...prev].slice(0, 5));
     };
 
     const dismissNotification = (messageId) => {
+        persistSuppressedNotification(messageId);
         setNotificationQueue(prev => prev.filter(n => n.id !== messageId));
     };
 
@@ -269,6 +353,7 @@ export const MessageProvider = ({ children, addToast }) => {
         addNotification,
         sendQuickReply,
         lastIncomingMessage,
+        lastMemberReadUpdate,
         userId
     };
 

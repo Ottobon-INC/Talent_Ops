@@ -55,8 +55,8 @@ export const NotificationProvider = ({ children }) => {
                 (payload) => {
                     const notif = payload.new;
                     
-                    // Messages are handled purely by MessageContext
-                    if (notif.type === 'message') return;
+                    // Messages and Mentions are handled purely by MessageContext
+                    if (notif.type === 'message' || notif.type === 'mention') return;
 
                     let type = 'info';
                     

@@ -61,12 +61,23 @@ export const useBrowserNotification = (userId, onNewNotification = null) => {
                         callbackRef.current(newNotification);
                     }
 
-                    // Native browser notifications DISABLED to satisfy USER request ("use app only")
-                    /*
                     if (Notification.permission === "granted") {
-                        // ... code omitted
+                        const title = newNotification?.sender_name
+                            ? `${newNotification.sender_name}`
+                            : 'Talent Ops';
+                        const body = newNotification?.message || 'You have a new notification';
+
+                        const notification = new Notification(title, {
+                            body,
+                            tag: newNotification?.id || `notif-${Date.now()}`,
+                            renotify: false
+                        });
+
+                        notification.onclick = () => {
+                            window.focus();
+                            notification.close();
+                        };
                     }
-                    */
                 }
             )
             .subscribe((status) => {

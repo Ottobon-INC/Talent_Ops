@@ -66,7 +66,8 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                 },
                 (payload) => {
                     console.log('Notification deleted:', payload.old);
-                    setNotifications((prev) => prev.filter(n => n.id !== payload.old.id));
+                    const deletedId = payload.old.id;
+                    setNotifications((prev) => prev.filter(n => n.id !== deletedId));
                     if (onNotificationUpdate) onNotificationUpdate();
                 }
             )
@@ -146,9 +147,7 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
 
     const markAllAsRead = async () => {
         try {
-            const unreadNotifications = notifications.filter(n => !n.is_read);
-            if (unreadNotifications.length === 0) return;
-
+            setLoading(true);
             await markAllNotificationsAsRead(currentUserId);
 
             // Clear the entire list since they were all unread and are now read
@@ -157,6 +156,8 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
             if (onNotificationUpdate) onNotificationUpdate();
         } catch (err) {
             console.error('Error marking all as read:', err);
+        } finally {
+            setLoading(false);
         }
     };
 

@@ -42,13 +42,8 @@ const MessageNotificationStack = () => {
     const audioRef = React.useRef(null);
     const prevQueueLengthRef = React.useRef(notificationQueue.length);
 
+    // Sound logic removed — handled by MessageContext for real-time consistency
     React.useEffect(() => {
-        if (notificationQueue.length > prevQueueLengthRef.current) {
-            if (audioRef.current) {
-                audioRef.current.currentTime = 0;
-                audioRef.current.play().catch(() => {});
-            }
-        }
         prevQueueLengthRef.current = notificationQueue.length;
     }, [notificationQueue]);
 

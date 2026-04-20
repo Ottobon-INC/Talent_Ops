@@ -183,8 +183,8 @@ const Header = () => {
         // Update unread count
         fetchUnreadCount();
 
-        // Show toast if notification data is present
-        if (newNotification) {
+        // Message-style popups are handled by MessageNotificationStack only.
+        if (newNotification && !['message', 'mention'].includes(newNotification.type)) {
             addToast(newNotification.message, 'info');
         }
     };

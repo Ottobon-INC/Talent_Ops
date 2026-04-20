@@ -99,13 +99,23 @@ export const sendAnnouncementNotification = async (recipientIds, creatorId, crea
  */
 export const markAllNotificationsAsRead = async (userId) => {
     try {
-        const { error } = await supabase
+        // 1. Permanently delete message-related notifications
+        const { error: delError } = await supabase
+            .from('notifications')
+            .delete()
+            .eq('receiver_id', userId)
+            .in('type', ['message', 'mention']);
+
+        if (delError) console.warn('Non-fatal: Error deleting message notifications:', delError);
+
+        // 2. Mark other notifications as read
+        const { error: updError } = await supabase
             .from('notifications')
             .update({ is_read: true })
             .eq('receiver_id', userId)
             .eq('is_read', false);
 
-        if (error) throw error;
+        if (updError) throw updError;
     } catch (error) {
         console.error('Error marking all notifications as read:', error);
         throw error;
@@ -118,19 +128,35 @@ export const markAllNotificationsAsRead = async (userId) => {
  */
 export const markNotificationAsRead = async (notificationId) => {
     try {
-        const { error } = await supabase
+        // First check type
+        const { data: notif } = await supabase
             .from('notifications')
-            .update({ is_read: true })
-            .eq('id', notificationId);
+            .select('type')
+            .eq('id', notificationId)
+            .single();
 
-        if (error) throw error;
+        if (notif && ['message', 'mention'].includes(notif.type)) {
+            // Delete if message/mention
+            const { error } = await supabase
+                .from('notifications')
+                .delete()
+                .eq('id', notificationId);
+            if (error) throw error;
+        } else {
+            // Otherwise just mark as read
+            const { error } = await supabase
+                .from('notifications')
+                .update({ is_read: true })
+                .eq('id', notificationId);
+            if (error) throw error;
+        }
     } catch (error) {
         console.error('Error marking notification as read:', error);
         throw error;
     }
 };
 /**
- * Marks message/mention notifications as read for a sender
+ * Deletes message/mention notifications for a specific sender
  * @param {string} userId - Current user receiving
  * @param {string} senderId - The sender we are looking at
  */
@@ -138,33 +164,31 @@ export const markMessageNotificationsAsRead = async (userId, senderId) => {
     try {
         const { error } = await supabase
             .from('notifications')
-            .update({ is_read: true })
+            .delete() // Permanently delete to clear history as requested
             .eq('receiver_id', userId)
             .eq('sender_id', senderId)
-            .in('type', ['message', 'mention'])
-            .eq('is_read', false);
+            .in('type', ['message', 'mention']);
 
         if (error) throw error;
     } catch (error) {
-        console.error('Error marking message notifications as read:', error);
+        console.error('Error clearing message notifications:', error);
     }
 };
 
 /**
- * Marks all message and mention notifications as read for a user
+ * Deletes all message and mention notifications for a user
  * @param {string} userId - Current user ID
  */
 export const markAllMessageNotificationsAsRead = async (userId) => {
     try {
         const { error } = await supabase
             .from('notifications')
-            .update({ is_read: true })
+            .delete() // Permanently delete to clear history as requested
             .eq('receiver_id', userId)
-            .in('type', ['message', 'mention'])
-            .eq('is_read', false);
+            .in('type', ['message', 'mention']);
 
         if (error) throw error;
     } catch (error) {
-        console.error('Error marking all message notifications as read:', error);
+        console.error('Error clearing all message notifications:', error);
     }
 };
