@@ -174,7 +174,8 @@ const Header = () => {
                 .from('notifications')
                 .select('*', { count: 'exact', head: true })
                 .eq('receiver_id', user.id)
-                .eq('is_read', false);
+                .eq('is_read', false)
+                .not('type', 'in', '("message","mention")');
 
             setUnreadCount(count || 0);
         }

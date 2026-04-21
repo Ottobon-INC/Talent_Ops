@@ -103,6 +103,7 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                 .select('*')
                 .eq('receiver_id', currentUserId)
                 .eq('is_read', false) // Only fetch unread notifications
+                .not('type', 'in', '("message","mention")') // Messages have their own UI
                 .order('created_at', { ascending: false })
                 .limit(20);
 

@@ -192,3 +192,30 @@ export const markAllMessageNotificationsAsRead = async (userId) => {
         console.error('Error clearing all message notifications:', error);
     }
 };
+
+/**
+ * Purge stale message/mention notifications older than 24 hours.
+ * These are transient by nature — if you didn't read them within a day,
+ * they should not resurface the next time you log in.
+ * This prevents the "4-month-old notification flood" bug.
+ * @param {string} userId - Current user ID
+ */
+export const purgeStaleMessageNotifications = async (userId) => {
+    try {
+        const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const { error } = await supabase
+            .from('notifications')
+            .delete()
+            .eq('receiver_id', userId)
+            .in('type', ['message', 'mention'])
+            .lt('created_at', cutoff);
+
+        if (error) {
+            console.warn('Non-fatal: Error purging stale message notifications:', error);
+        } else {
+            console.log('[NotificationService] Purged stale message notifications older than 24h');
+        }
+    } catch (error) {
+        console.error('Error purging stale message notifications:', error);
+    }
+};

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { supabase } from '../../../lib/supabaseClient';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getConversationsByCategory, sendMessage, markAsReadInDB } from '../../../services/messageService';
-import { markAllMessageNotificationsAsRead } from '../../../services/notificationService';
+import { markAllMessageNotificationsAsRead, purgeStaleMessageNotifications } from '../../../services/notificationService';
 
 const messageAudio = new Audio('/sound.mp3');
 messageAudio.preload = 'auto';
@@ -23,6 +23,7 @@ export const MessageProvider = ({ children, addToast }) => {
     const handledNotificationsRef = useRef(new Set());
     const suppressedNotificationsRef = useRef(new Set());
     const conversationsRef = useRef(conversations);
+    const locationRef = useRef(null);
 
     // Keep the ref in sync with state
     useEffect(() => {
@@ -54,6 +55,9 @@ export const MessageProvider = ({ children, addToast }) => {
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             if (event === 'SIGNED_IN' && session?.user) {
                 setUserId(session.user.id);
+                // Auto-purge stale message notifications on login to prevent
+                // the "4-month-old notification flood" bug
+                purgeStaleMessageNotifications(session.user.id);
             } else if (event === 'SIGNED_OUT') {
                 setUserId(null);
                 setConversations([]);
@@ -246,7 +250,7 @@ export const MessageProvider = ({ children, addToast }) => {
                     };
 
                     // If the user is already inside the messaging area, don't show popup cards again.
-                    if (location.pathname.includes('/messages')) {
+                    if (locationRef.current?.includes('/messages')) {
                         persistSuppressedNotification(payload.new.id);
                     } else {
                         addNotification(newNotification);
@@ -278,7 +282,12 @@ export const MessageProvider = ({ children, addToast }) => {
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [userId, location.pathname]); 
+    }, [userId]); // Removed location.pathname — prevents channel teardown/reconnect on every navigation
+
+    // Keep locationRef in sync so the channel callback can read it without re-subscribing
+    useEffect(() => {
+        locationRef.current = location.pathname;
+    }, [location.pathname]);
 
     // 7. Calculate Unread Count
     useEffect(() => {
