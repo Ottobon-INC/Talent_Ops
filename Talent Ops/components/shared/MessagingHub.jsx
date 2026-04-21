@@ -591,7 +591,7 @@ const MessagingHub = () => {
                     const hydrated = await hydrateMessage(newMessage.id);
                     if (hydrated) newMessage = hydrated;
                     if (!content.trim()) {
-                        await updateConversationIndex(targetConversationId, 'Attachment', currentUserId);
+                        await updateConversationIndex(targetConversationId, 'Attachment', currentUserId, newMessage?.created_at);
                     }
                 } catch (attachmentError) {
                     console.error('Error uploading attachments:', attachmentError);
