@@ -22,6 +22,12 @@ export const MessageProvider = ({ children, addToast }) => {
     const [lastMemberReadUpdate, setLastMemberReadUpdate] = useState(null);
     const handledNotificationsRef = useRef(new Set());
     const suppressedNotificationsRef = useRef(new Set());
+    const conversationsRef = useRef(conversations);
+
+    // Keep the ref in sync with state
+    useEffect(() => {
+        conversationsRef.current = conversations;
+    }, [conversations]);
 
     const navigate = useNavigate();
     const location = useLocation();
@@ -297,8 +303,12 @@ export const MessageProvider = ({ children, addToast }) => {
 
     // Actions
     const markAsRead = (conversationId) => {
-        // Use a small buffer to ensure we cover the latest message timestamp perfectly
-        const now = Date.now() + 500; 
+        const conv = conversationsRef.current?.find(c => c.id === conversationId);
+        const lastMsgAtStr = conv?.conversation_indexes?.[0]?.last_message_at;
+        const lastMsgTime = lastMsgAtStr ? new Date(lastMsgAtStr).getTime() : 0;
+
+        // Use a buffer and ensure we cover the latest message timestamp perfectly even if sender's clock was ahead
+        const now = Math.max(Date.now(), lastMsgTime) + 1000; 
         setLastReadTimes(prev => {
             const updated = { ...prev, [conversationId]: now };
             if (userId) localStorage.setItem(`message_read_times_${userId}`, JSON.stringify(updated));
@@ -306,7 +316,7 @@ export const MessageProvider = ({ children, addToast }) => {
         });
 
         if (userId && conversationId) {
-            markAsReadInDB(conversationId, userId);
+            markAsReadInDB(conversationId, userId, new Date(now).toISOString());
             // Also clear all message notifications for this user (Issue: Double notifications)
             markAllMessageNotificationsAsRead(userId);
         }
@@ -363,3 +373,4 @@ export const MessageProvider = ({ children, addToast }) => {
         </MessageContext.Provider>
     );
 };
+
