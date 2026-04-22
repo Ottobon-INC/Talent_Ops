@@ -868,6 +868,48 @@ export const addMemberToConversation = async (conversationId, userId, adminId) =
 };
 
 /**
+ * Promote member to admin
+ */
+export const promoteMemberToAdmin = async (conversationId, userIdToPromote, adminId) => {
+    try {
+        const isAdmin = await isConversationAdmin(conversationId, adminId);
+        if (!isAdmin) throw new Error('Only admins can promote members');
+
+        const { error } = await supabase
+            .from('conversation_members')
+            .update({ is_admin: true })
+            .eq('conversation_id', conversationId)
+            .eq('user_id', userIdToPromote);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error promoting member:', error);
+        throw error;
+    }
+};
+
+/**
+ * Demote member from admin
+ */
+export const demoteMemberFromAdmin = async (conversationId, userIdToDemote, adminId) => {
+    try {
+        const isAdmin = await isConversationAdmin(conversationId, adminId);
+        if (!isAdmin) throw new Error('Only admins can demote members');
+
+        const { error } = await supabase
+            .from('conversation_members')
+            .update({ is_admin: false })
+            .eq('conversation_id', conversationId)
+            .eq('user_id', userIdToDemote);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error demoting member:', error);
+        throw error;
+    }
+};
+
+/**
  * Remove member from conversation
  */
 export const removeMemberFromConversation = async (conversationId, userIdToRemove, adminId) => {

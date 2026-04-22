@@ -42,6 +42,7 @@ const DocumentsWithToast = () => {
 };
 
 export const ExecutiveDashboard = () => {
+    console.log('ExecutiveDashboard Mounting...');
     return (
         <RoleGuard allowedRoles={['executive', 'admin']}>
             <UserProvider>
