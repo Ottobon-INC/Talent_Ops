@@ -10,6 +10,7 @@ import VoteDetailsModal from './VoteDetailsModal';
 import MembersModal from './MembersModal';
 import AddMemberModal from './AddMemberModal';
 import RenameGroupModal from './RenameGroupModal';
+import MessageInfoModal from './MessageInfoModal';
 import DocumentViewer from '../DocumentViewer';
 
 // ── Helper: render message content with clickable links & newline support ──
@@ -100,6 +101,7 @@ const ChatWindow = ({
     const [showRenameModal, setShowRenameModal] = useState(false);
     const [newGroupName, setNewGroupName] = useState('');
     const [showVoteDetails, setShowVoteDetails] = useState(null);
+    const [showMessageInfoFor, setShowMessageInfoFor] = useState(null);
 
     // Document Viewer state
     const [previewUrl, setPreviewUrl] = useState('');
@@ -514,6 +516,19 @@ const ChatWindow = ({
                                                                 </button>
                                                             )}
 
+                                                            {/* WhatsApp-style Message Info (for sender in group/company chats) */}
+                                                            {msg.sender_user_id === currentUserId && (selectedConversation.type === 'team' || selectedConversation.type === 'everyone') && (
+                                                                <button
+                                                                    onClick={() => setShowMessageInfoFor(msg.id)}
+                                                                    title="Message Info"
+                                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', color: '#64748b', display: 'flex', borderRadius: '50%', transition: 'all 0.2s' }}
+                                                                    onMouseEnter={(e) => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#10b981'; }}
+                                                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#64748b'; }}
+                                                                >
+                                                                    <CheckCircle2 size={16} />
+                                                                </button>
+                                                            )}
+
                                                             {/* Delete Actions - Now enabled for all message types (Issue 8) */}
                                                             {msg.sender_user_id === currentUserId && (new Date() - new Date(msg.created_at)) < 15 * 60 * 1000 && (
                                                                 <>
@@ -597,7 +612,18 @@ const ChatWindow = ({
                                                             style={{ marginLeft: '4px', display: 'inline-flex', verticalAlign: 'middle' }}
                                                             title={msg.seen_by?.length > 0 ? msg.seen_by.map(s => `Seen by ${s.name} at ${new Date(s.seen_at).toLocaleTimeString()}`).join('\n') : 'Delivered'}
                                                         >
-                                                            <svg width="16" height="11" viewBox="0 0 16 11" fill="none" style={{ color: msg.is_read_by_others ? '#3b82f6' : '#94a3b8' }}>
+                                                            <svg
+                                                                width="16"
+                                                                height="11"
+                                                                viewBox="0 0 16 11"
+                                                                fill="none"
+                                                                style={{
+                                                                    color:
+                                                                        (selectedConversation.type === 'team' || selectedConversation.type === 'everyone')
+                                                                            ? (msg.is_read_by_all ? '#3b82f6' : '#94a3b8')
+                                                                            : (msg.is_read_by_others ? '#3b82f6' : '#94a3b8')
+                                                                }}
+                                                            >
                                                                 <path d="M11.071 0.929L4.5 7.5L1.929 4.929" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                                                 <path d="M14.071 0.929L7.5 7.5L6.5 6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                                             </svg>
@@ -668,6 +694,16 @@ const ChatWindow = ({
                     message={messages.find(m => m.id === showVoteDetails)}
                     votes={allPollVotes[showVoteDetails] || []}
                     onClose={() => setShowVoteDetails(null)}
+                />
+            )}
+
+            {/* ════════ Message Info Modal (Seen by list) ════════ */}
+            {showMessageInfoFor && (
+                <MessageInfoModal
+                    message={messages.find(m => m.id === showMessageInfoFor)}
+                    members={currentMembers}
+                    currentUserId={currentUserId}
+                    onClose={() => setShowMessageInfoFor(null)}
                 />
             )}
 
