@@ -289,8 +289,11 @@ export const getConversationMessages = async (conversationId, orgId = null) => {
 
         // 3. Enrich messages with read status metadata
         const enrichedMessages = messages.map(msg => {
-            const seenBy = (members || [])
-                .filter(m => m.user_id !== msg.sender_user_id && m.last_read_at && (new Date(m.last_read_at).getTime() + READ_RECEIPT_SKEW_MS >= new Date(msg.created_at).getTime()))
+            const eligibleReaders = (members || []).filter(m => m.user_id !== msg.sender_user_id);
+            const requiredReadersCount = eligibleReaders.length;
+
+            const seenBy = eligibleReaders
+                .filter(m => m.last_read_at && (new Date(m.last_read_at).getTime() + READ_RECEIPT_SKEW_MS >= new Date(msg.created_at).getTime()))
                 .map(m => ({
                     user_id: m.user_id,
                     name: m.profiles?.full_name || 'User',
@@ -300,7 +303,9 @@ export const getConversationMessages = async (conversationId, orgId = null) => {
             return {
                 ...msg,
                 seen_by: seenBy,
-                is_read_by_others: seenBy.length > 0
+                required_readers_count: requiredReadersCount,
+                is_read_by_others: seenBy.length > 0,
+                is_read_by_all: requiredReadersCount > 0 && seenBy.length >= requiredReadersCount
             };
         });
 

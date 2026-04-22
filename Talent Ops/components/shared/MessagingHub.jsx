@@ -832,7 +832,18 @@ const MessagingHub = () => {
     // ══════════════════════════════════════════════
 
     const handleSelectConversation = (conv) => {
+        // #region agent log (debug)
+        fetch('http://127.0.0.1:7913/ingest/7714614f-7dca-4c37-a17c-564f376e14bc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f33bb'},body:JSON.stringify({sessionId:'7f33bb',runId:'pre-fix',hypothesisId:'H6',location:'MessagingHub.jsx:handleSelectConversation',message:'select conversation',data:{convId:conv?.id||null,type:conv?.type||null,temp:Boolean(conv?.temp),currentUserId:currentUserId||null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+
         loadMessages(conv);
+
+        // Fix: opening a conversation should mark it as read so sidebar counts clear
+        if (conv?.id && !conv?.temp) {
+            markAsRead(conv.id);
+            // Optimistic UI: clear unread count for this conversation immediately
+            setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: 0 } : c));
+        }
     };
 
     const handleJoinOrganizationChat = async () => {
