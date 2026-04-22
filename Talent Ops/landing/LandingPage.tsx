@@ -48,6 +48,7 @@ export function LandingPage() {
             return () => { cancelled = true; clearTimeout(timeout); };
         }
     }, [scrollTo]);
+
     return (
         <SmoothScroll>
             <motion.div

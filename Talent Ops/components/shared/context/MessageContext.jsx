@@ -6,7 +6,6 @@ import { markAllMessageNotificationsAsRead, purgeStaleMessageNotifications } fro
 
 const messageAudio = new Audio('/sound.mp3');
 messageAudio.preload = 'auto';
-console.log('[MessageContext] Initialized sound: /sound.mp3');
 
 const MessageContext = createContext();
 
@@ -20,29 +19,62 @@ export const MessageProvider = ({ children, addToast }) => {
     const [notificationQueue, setNotificationQueue] = useState([]);
     const [lastIncomingMessage, setLastIncomingMessage] = useState(null);
     const [lastMemberReadUpdate, setLastMemberReadUpdate] = useState(null);
+    
     const handledNotificationsRef = useRef(new Set());
     const suppressedNotificationsRef = useRef(new Set());
     const conversationsRef = useRef(conversations);
     const locationRef = useRef(null);
 
-    // Keep the ref in sync with state
-    useEffect(() => {
-        conversationsRef.current = conversations;
-    }, [conversations]);
-
     const navigate = useNavigate();
     const location = useLocation();
 
+    // -- Utilities --
     const getSuppressedStorageKey = (nextUserId) => `message_suppressed_notifications_${nextUserId}`;
 
     const persistSuppressedNotification = (notificationId) => {
         if (!userId || !notificationId) return;
-
         suppressedNotificationsRef.current.add(notificationId);
         const trimmed = Array.from(suppressedNotificationsRef.current).slice(-200);
         suppressedNotificationsRef.current = new Set(trimmed);
         localStorage.setItem(getSuppressedStorageKey(userId), JSON.stringify(trimmed));
     };
+
+    const showBrowserNotification = (title, body) => {
+        try {
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                const notif = new Notification(title, {
+                    body: body,
+                    tag: 'talent-ops-msg',
+                    renotify: true
+                });
+                notif.onclick = () => {
+                    window.focus();
+                    notif.close();
+                };
+            }
+        } catch (e) {
+            console.warn('[MessageContext] Browser notification failed:', e);
+        }
+    };
+
+    const addNotification = (notification) => {
+        if (!notification?.id || suppressedNotificationsRef.current.has(notification.id)) return;
+        setNotificationQueue(prev => [notification, ...prev].slice(0, 5));
+    };
+
+    const dismissNotification = (messageId) => {
+        persistSuppressedNotification(messageId);
+        setNotificationQueue(prev => prev.filter(n => n.id !== messageId));
+    };
+
+    // -- Effects --
+    useEffect(() => {
+        conversationsRef.current = conversations;
+    }, [conversations]);
+
+    useEffect(() => {
+        locationRef.current = location.pathname;
+    }, [location.pathname]);
 
     // 1. Auth Change Listener
     useEffect(() => {
@@ -55,8 +87,6 @@ export const MessageProvider = ({ children, addToast }) => {
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             if (event === 'SIGNED_IN' && session?.user) {
                 setUserId(session.user.id);
-                // Auto-purge stale message notifications on login to prevent
-                // the "4-month-old notification flood" bug
                 purgeStaleMessageNotifications(session.user.id);
             } else if (event === 'SIGNED_OUT') {
                 setUserId(null);
@@ -69,40 +99,29 @@ export const MessageProvider = ({ children, addToast }) => {
         return () => subscription.unsubscribe();
     }, []);
 
-    // 2. Load initial Read Times from Storage
+    // 2. Initial Setup (Read times & Permissions)
     useEffect(() => {
         if (!userId) return;
-        const storageKey = `message_read_times_${userId}`;
-        const stored = localStorage.getItem(storageKey);
+        
+        // Load read times
+        const stored = localStorage.getItem(`message_read_times_${userId}`);
         if (stored) {
-            try {
-                setLastReadTimes(JSON.parse(stored));
-            } catch (e) {
-                console.error('Failed to parse read times', e);
-            }
+            try { setLastReadTimes(JSON.parse(stored)); } catch (e) {}
         }
 
+        // Load suppressed notifications
         const suppressedStored = localStorage.getItem(getSuppressedStorageKey(userId));
         if (suppressedStored) {
-            try {
-                suppressedNotificationsRef.current = new Set(JSON.parse(suppressedStored));
-            } catch (e) {
-                console.error('Failed to parse suppressed notifications', e);
-                suppressedNotificationsRef.current = new Set();
-            }
-        } else {
-            suppressedNotificationsRef.current = new Set();
+            try { suppressedNotificationsRef.current = new Set(JSON.parse(suppressedStored)); } catch (e) {}
+        }
+
+        // Request browser notification permission
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission().catch(() => {});
         }
     }, [userId]);
 
-    // 3. Request Notification Permissions
-    useEffect(() => {
-        if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
-        }
-    }, []);
-
-    // 4. Fetch Conversations
+    // 3. Fetch Conversations logic
     const fetchConversations = async () => {
         if (!userId) return [];
         try {
@@ -113,7 +132,6 @@ export const MessageProvider = ({ children, addToast }) => {
 
             if (!memberships?.length) return [];
 
-            // Sync lastReadTimes with DB values
             const updatedLastReadTimes = { ...lastReadTimes };
             let hasChanges = false;
             memberships.forEach(m => {
@@ -131,29 +149,25 @@ export const MessageProvider = ({ children, addToast }) => {
                 localStorage.setItem(`message_read_times_${userId}`, JSON.stringify(updatedLastReadTimes));
             }
 
-            const conversationIds = memberships.map(m => m.conversation_id);
-
             const { data: convs, error } = await supabase
                 .from('conversations')
                 .select(`id, type, name, conversation_indexes(last_message, last_message_at, last_sender_id)`)
-                .in('id', conversationIds);
+                .in('id', memberships.map(m => m.conversation_id));
 
             if (error) throw error;
 
-            // Fetch exact unread counts for conversations that seem unread
             const convsWithCounts = await Promise.all((convs || []).map(async (conv) => {
                 const index = conv.conversation_indexes?.[0];
                 const lastRead = updatedLastReadTimes[conv.id] || 0;
                 const lastMsgTime = index?.last_message_at ? new Date(index.last_message_at).getTime() : 0;
                 
                 if (lastMsgTime > lastRead && index?.last_sender_id !== userId) {
-                    const { count, error: countError } = await supabase
+                    const { count } = await supabase
                         .from('messages')
                         .select('*', { count: 'exact', head: true })
                         .eq('conversation_id', conv.id)
                         .gt('created_at', new Date(lastRead).toISOString())
                         .neq('sender_user_id', userId);
-                    
                     return { ...conv, unread_count: count || 0 };
                 }
                 return { ...conv, unread_count: 0 };
@@ -167,19 +181,18 @@ export const MessageProvider = ({ children, addToast }) => {
         }
     };
 
-    // 5. Initial fetch & 60s fallback polling
     useEffect(() => {
         fetchConversations();
         const interval = setInterval(fetchConversations, 60000);
         return () => clearInterval(interval);
     }, [userId]);
 
-    // 6. Real-time Message Listener
+    // 4. Real-time Message Listener
     useEffect(() => {
         if (!userId) return;
 
         const channel = supabase
-            .channel(`messages-${userId}`)
+            .channel(`messages-rt-${userId}`)
             .on(
                 'postgres_changes',
                 {
@@ -189,21 +202,16 @@ export const MessageProvider = ({ children, addToast }) => {
                     filter: `type=eq.message`
                 },
                 async (payload) => {
-                    // Make sure it's meant for this user and not already handled
                     if (payload.new.receiver_id !== userId) return;
                     if (handledNotificationsRef.current.has(payload.new.id)) return;
                     if (suppressedNotificationsRef.current.has(payload.new.id)) return;
                     
                     handledNotificationsRef.current.add(payload.new.id);
-                    // Keep the set size manageable
                     if (handledNotificationsRef.current.size > 50) {
                         const firstItem = handledNotificationsRef.current.values().next().value;
                         handledNotificationsRef.current.delete(firstItem);
                     }
 
-                    console.log('📬 Real-time message received:', payload);
-
-                    // Play sound IMMEDIATELY — before any async work
                     try {
                         messageAudio.currentTime = 0;
                         messageAudio.play().catch(() => {});
@@ -216,7 +224,6 @@ export const MessageProvider = ({ children, addToast }) => {
                     let conversationId = null;
                     let displayMessage = payload.new.message || 'New Message';
 
-                    // Context Fetching
                     if (senderId) {
                         const [profileRes, membershipsRes] = await Promise.all([
                             supabase.from('profiles').select('avatar_url').eq('id', senderId).single(),
@@ -227,40 +234,38 @@ export const MessageProvider = ({ children, addToast }) => {
 
                         if (memberships) {
                             const senderConvIds = memberships.map(c => c.conversation_id);
-                            const latestConvs = await fetchConversations();
+                            const latestConvs = conversationsRef.current;
                             const dm = latestConvs?.find(c => c.type === 'dm' && senderConvIds.includes(c.id));
                             if (dm) {
                                 conversationId = dm.id;
                                 const lastMessage = dm.conversation_indexes?.[0]?.last_message;
-                                if (lastMessage) {
-                                    displayMessage = lastMessage;
-                                }
+                                if (lastMessage) displayMessage = lastMessage;
                             }
                         }
                     }
 
-                    const newNotification = {
-                        id: payload.new.id || Date.now(),
-                        sender_id: senderId,
-                        sender_name: payload.new.sender_name || 'User',
-                        avatar_url: senderAvatar,
-                        content: displayMessage,
-                        conversation_id: conversationId,
-                        timestamp: Date.now()
-                    };
+                    // Show browser notification if tab is hidden
+                    if (document.visibilityState === 'hidden') {
+                        showBrowserNotification(
+                            `New message from ${payload.new.sender_name || 'User'}`,
+                            displayMessage
+                        );
+                    }
 
-                    // If the user is already inside the messaging area, don't show popup cards again.
                     if (locationRef.current?.includes('/messages')) {
                         persistSuppressedNotification(payload.new.id);
                     } else {
-                        addNotification(newNotification);
+                        addNotification({
+                            id: payload.new.id || Date.now(),
+                            sender_id: senderId,
+                            sender_name: payload.new.sender_name || 'User',
+                            avatar_url: senderAvatar,
+                            content: displayMessage,
+                            conversation_id: conversationId,
+                            timestamp: Date.now()
+                        });
                     }
-                    setLastIncomingMessage({ 
-                        id: payload.new.id, 
-                        conversation_id: conversationId,
-                        timestamp: Date.now() 
-                    });
-
+                    setLastIncomingMessage({ id: payload.new.id, conversation_id: conversationId, timestamp: Date.now() });
                 }
             )
             .on(
@@ -271,9 +276,7 @@ export const MessageProvider = ({ children, addToast }) => {
                     table: 'conversation_members'
                 },
                 (payload) => {
-                    console.log('👀 Member read status updated:', payload);
                     fetchConversations();
-                    // Signal MessagingHub to refresh open chat's message read status
                     setLastMemberReadUpdate({ conversation_id: payload.new?.conversation_id, user_id: payload.new?.user_id, last_read_at: payload.new?.last_read_at, _t: Date.now() });
                 }
             )
@@ -282,42 +285,30 @@ export const MessageProvider = ({ children, addToast }) => {
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [userId]); // Removed location.pathname — prevents channel teardown/reconnect on every navigation
+    }, [userId]);
 
-    // Keep locationRef in sync so the channel callback can read it without re-subscribing
-    useEffect(() => {
-        locationRef.current = location.pathname;
-    }, [location.pathname]);
-
-    // 7. Calculate Unread Count
+    // 5. Unread calculation
     useEffect(() => {
         if (!conversations.length) return;
-
         let count = 0;
         let hasValidIndexes = false;
-
         conversations.forEach(conv => {
             const index = conv.conversation_indexes?.[0];
             if (!index?.last_message_at) return;
-
             hasValidIndexes = true;
             const lastMsgTime = new Date(index.last_message_at).getTime();
             const lastReadTime = lastReadTimes[conv.id] || 0;
-
             if (lastMsgTime > lastReadTime && index.last_sender_id !== userId) count++;
         });
-
         if (hasValidIndexes) setUnreadCount(count);
     }, [conversations, lastReadTimes]);
 
-    // Actions
     const markAsRead = (conversationId) => {
         const conv = conversationsRef.current?.find(c => c.id === conversationId);
         const lastMsgAtStr = conv?.conversation_indexes?.[0]?.last_message_at;
         const lastMsgTime = lastMsgAtStr ? new Date(lastMsgAtStr).getTime() : 0;
-
-        // Use a buffer and ensure we cover the latest message timestamp perfectly even if sender's clock was ahead
         const now = Math.max(Date.now(), lastMsgTime) + 1000; 
+
         setLastReadTimes(prev => {
             const updated = { ...prev, [conversationId]: now };
             if (userId) localStorage.setItem(`message_read_times_${userId}`, JSON.stringify(updated));
@@ -326,28 +317,10 @@ export const MessageProvider = ({ children, addToast }) => {
 
         if (userId && conversationId) {
             markAsReadInDB(conversationId, userId, new Date(now).toISOString());
-            // Also clear all message notifications for this user (Issue: Double notifications)
             markAllMessageNotificationsAsRead(userId);
         }
 
-        setNotificationQueue(prev => {
-            prev.forEach(notification => {
-                if (!conversationId || notification.conversation_id === conversationId) {
-                    persistSuppressedNotification(notification.id);
-                }
-            });
-            return prev.filter(notification => notification.conversation_id !== conversationId);
-        });
-    };
-
-    const addNotification = (notification) => {
-        if (!notification?.id || suppressedNotificationsRef.current.has(notification.id)) return;
-        setNotificationQueue(prev => [notification, ...prev].slice(0, 5));
-    };
-
-    const dismissNotification = (messageId) => {
-        persistSuppressedNotification(messageId);
-        setNotificationQueue(prev => prev.filter(n => n.id !== messageId));
+        setNotificationQueue(prev => prev.filter(n => n.conversation_id !== conversationId));
     };
 
     const sendQuickReply = async (conversationId, text) => {
@@ -356,10 +329,7 @@ export const MessageProvider = ({ children, addToast }) => {
             const { data: conv } = await supabase.from('conversations').select('org_id').eq('id', conversationId).single();
             await sendMessage(conversationId, userId, text.trim(), [], conv?.org_id);
             return true;
-        } catch (err) {
-            console.error('Quick reply error:', err);
-            return false;
-        }
+        } catch (err) { return false; }
     };
 
     const value = {
@@ -382,4 +352,3 @@ export const MessageProvider = ({ children, addToast }) => {
         </MessageContext.Provider>
     );
 };
-
