@@ -5,6 +5,7 @@ import { Eye, Edit, Trash2 } from 'lucide-react';
 const LeavesFeature = ({ leaves, type, title, onAction, userId, projectRole, leaveStats, remainingLeaves }) => {
     let columns = [];
     let dataToDisplay = leaves;
+    const annualQuota = leaveStats?.annualQuota ?? leaveStats?.monthlyQuota ?? 12;
 
     // Helper for current month name
     const currentMonthName = new Date().toLocaleDateString('en-US', { month: 'long' });
@@ -142,10 +143,10 @@ const LeavesFeature = ({ leaves, type, title, onAction, userId, projectRole, lea
                     <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>Leave Summary</h3>
                     
                     <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
-                        {/* Monthly Allowance */}
+                        {/* Casual Leaves (annual entitlement, prorated in join year) */}
                         <div style={{ flex: '1', minWidth: '200px', backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                            <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Monthly Allowance</p>
-                            <span style={{ fontSize: '1.75rem', fontWeight: '800', color: '#0f172a' }}>{leaveStats.monthlyQuota || 1}</span>
+                            <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', fontWeight: '600', color: '#64748b' }}>Casual Leaves</p>
+                            <span style={{ fontSize: '1.75rem', fontWeight: '800', color: '#0f172a' }}>{annualQuota}</span>
                         </div>
 
                         {/* Used (Month) */}
@@ -158,7 +159,7 @@ const LeavesFeature = ({ leaves, type, title, onAction, userId, projectRole, lea
                         <div style={{ flex: '1', minWidth: '240px', backgroundColor: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                             <p style={{ margin: '0 0 12px 0', fontSize: '0.85rem', fontWeight: '600', color: '#0f172a' }}>Annual Usage ({currentYear})</p>
                             <div style={{ backgroundColor: '#2563eb', color: 'white', padding: '6px 20px', borderRadius: '24px', fontSize: '1.1rem', fontWeight: '800', letterSpacing: '0.05em' }}>
-                                {leaveStats.yearlyUsed || 0} / 12
+                                {leaveStats.yearlyUsed || 0} / {annualQuota}
                             </div>
                         </div>
                     </div>
