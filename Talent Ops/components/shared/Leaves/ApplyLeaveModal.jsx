@@ -114,7 +114,9 @@ const ApplyLeaveModal = ({ onClose, onSuccess }) => {
                     status: 'pending',
                     duration_weekdays: paid,
                     lop_days: lop,
-                    applied_on: new Date().toISOString()
+                    // `created_at` is the "applied on" timestamp (when the request is submitted).
+                    // `from_date` / `to_date` represent the leave period.
+                    created_at: new Date().toISOString()
                 });
 
             if (insertError) throw insertError;

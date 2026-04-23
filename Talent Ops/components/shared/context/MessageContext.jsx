@@ -86,17 +86,6 @@ export const MessageProvider = ({ children, addToast }) => {
         locationRef.current = location.pathname;
     }, [location.pathname]);
 
-    // Clear transient message toasts while user is on Messages page.
-    // This prevents old toasts from lingering and resurfacing when a new message arrives.
-    useEffect(() => {
-        if (location.pathname?.includes('/messages')) {
-            // #region agent log (debug)
-            fetch('http://127.0.0.1:7913/ingest/7714614f-7dca-4c37-a17c-564f376e14bc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f33bb'},body:JSON.stringify({sessionId:'7f33bb',runId:'pre-fix',hypothesisId:'H5',location:'MessageContext.jsx:useEffect(location)',message:'clearing notificationQueue because on /messages',data:{path:location.pathname,queueLen:notificationQueue.length},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
-            setNotificationQueue([]);
-        }
-    }, [location.pathname]);
-
     // 1. Auth Change Listener
     useEffect(() => {
         const getUser = async () => {
@@ -334,10 +323,6 @@ export const MessageProvider = ({ children, addToast }) => {
         const lastMsgTime = lastMsgAtStr ? new Date(lastMsgAtStr).getTime() : 0;
         const now = Math.max(Date.now(), lastMsgTime) + 1000; 
 
-        // #region agent log (debug)
-        fetch('http://127.0.0.1:7913/ingest/7714614f-7dca-4c37-a17c-564f376e14bc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f33bb'},body:JSON.stringify({sessionId:'7f33bb',runId:'pre-fix',hypothesisId:'H7',location:'MessageContext.jsx:markAsRead',message:'markAsRead called',data:{conversationId,lastMsgAt:lastMsgAtStr||null,lastMsgTime,now,userId:userId||null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-
         setLastReadTimes(prev => {
             const updated = { ...prev, [conversationId]: now };
             if (userId) localStorage.setItem(`message_read_times_${userId}`, JSON.stringify(updated));
@@ -346,19 +331,10 @@ export const MessageProvider = ({ children, addToast }) => {
 
         if (userId && conversationId) {
             markAsReadInDB(conversationId, userId, new Date(now).toISOString());
-            // IMPORTANT:
-            // Do NOT clear ALL message notifications for the user here.
-            // Marking one conversation as read should not remove other chats' unseen notifications.
-            // Message toasts are handled by `notificationQueue` + suppression.
-            // (We can later delete only this conversation's notifications once `notifications.conversation_id` exists.)
-            // #region agent log (debug)
-            fetch('http://127.0.0.1:7913/ingest/7714614f-7dca-4c37-a17c-564f376e14bc',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f33bb'},body:JSON.stringify({sessionId:'7f33bb',runId:'pre-fix',hypothesisId:'H8',location:'MessageContext.jsx:markAsRead',message:'skipped markAllMessageNotificationsAsRead to avoid clearing other chats',data:{conversationId,userId:userId||null},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
+            markAllMessageNotificationsAsRead(userId);
         }
 
-        // Some message notifications may not have a resolvable conversation_id (null),
-        // so we also clear those to avoid old toasts resurfacing with new ones.
-        setNotificationQueue(prev => prev.filter(n => n.conversation_id && n.conversation_id !== conversationId));
+        setNotificationQueue(prev => prev.filter(n => n.conversation_id !== conversationId));
     };
 
     const sendQuickReply = async (conversationId, text) => {
