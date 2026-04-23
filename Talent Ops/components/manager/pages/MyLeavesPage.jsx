@@ -35,6 +35,13 @@ const MyLeavesPage = () => {
     };
 
     const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const isCasualExhausted = (remainingLeaves ?? 0) <= 0;
+
+    useEffect(() => {
+        if (isCasualExhausted && leaveFormData.leaveType === 'Casual Leave') {
+            setLeaveFormData(prev => ({ ...prev, leaveType: 'Sick Leave' }));
+        }
+    }, [isCasualExhausted, leaveFormData.leaveType]);
 
     // Calculate LOP vs Paid breakdown
     const calculateBreakdown = () => {
@@ -92,12 +99,7 @@ const MyLeavesPage = () => {
                     // Use duration_weekdays if available in DB, else calculate on the fly
                     const diffDays = leave.duration_weekdays || calculateWeekdayDuration(leave.from_date, leave.to_date);
 
-                    let type = 'Leave';
-                    let reason = leave.reason || '';
-                    if (reason.includes(':')) {
-                        const parts = reason.split(':');
-                        type = parts[0];
-                    }
+                    const type = leave.leave_type || 'Leave';
 
                     const displayDuration = diffDays === 1 ? '1 Day' : `${diffDays} Days`;
                     const lopSuffix = leave.lop_days > 0 ? ` (+${leave.lop_days} LOP)` : '';
@@ -134,40 +136,50 @@ const MyLeavesPage = () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            // Get profile for quota
+            // Get profile and compute annual entitlement (pro-rated in join year)
             const { data: profile, error: profileErr } = await supabase
                 .from('profiles')
-                .select('monthly_leave_quota, org_id')
+                .select('org_id, join_date, created_at')
                 .eq('id', user.id)
                 .single();
 
             if (profileErr) return;
             setOrgId(profile.org_id);
-            const monthlyQuota = profile.monthly_leave_quota || 1;
-
-            // Fetch leaves for the current month
             const now = new Date();
-            const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-            const lastOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+            const currentYear = now.getFullYear();
+            const fullYearQuota = 12;
 
-            const { data: monthlyLeaves } = await supabase
+            const joinAnchor = profile.join_date || profile.created_at;
+            const joinDate = joinAnchor ? new Date(joinAnchor) : null;
+            const annualQuota = (() => {
+                if (!joinDate || Number.isNaN(joinDate.getTime())) return fullYearQuota;
+                const joinYear = joinDate.getFullYear();
+                const joinMonth = joinDate.getMonth();
+                if (joinYear < currentYear) return fullYearQuota;
+                if (joinYear > currentYear) return 0;
+                return Math.max(0, fullYearQuota - joinMonth);
+            })();
+
+            // Fetch leaves for the current year
+            const firstOfYear = `${currentYear}-01-01`;
+            const lastOfYear = `${currentYear}-12-31`;
+
+            const { data: yearlyLeaves } = await supabase
                 .from('leaves')
-                .select('duration_weekdays, lop_days, status, reason')
+                .select('duration_weekdays, lop_days, status')
                 .eq('employee_id', user.id)
-                .gte('from_date', firstOfMonth)
-                .lte('from_date', lastOfMonth);
+                .gte('from_date', firstOfYear)
+                .lte('from_date', lastOfYear);
 
-            const takenThisMonth = monthlyLeaves ? monthlyLeaves.reduce((sum, leave) => {
-                if (leave.status === 'approved' || leave.status === 'pending') {
-                    // Don't count LOP as paid leave
-                    if (leave.reason && leave.reason.toLowerCase().includes('loss of pay')) return sum;
+            const usedThisYear = yearlyLeaves ? yearlyLeaves.reduce((sum, leave) => {
+                if (leave.status === 'approved') {
                     const paidDuration = Math.max(0, (leave.duration_weekdays || 1) - (leave.lop_days || 0));
                     return sum + paidDuration;
                 }
                 return sum;
             }, 0) : 0;
 
-            setRemainingLeaves(Math.max(0, monthlyQuota - takenThisMonth));
+            setRemainingLeaves(Math.max(0, annualQuota - usedThisYear));
         };
 
         fetchLeaves();
@@ -199,7 +211,7 @@ const MyLeavesPage = () => {
         if (action === 'Apply for Leave') {
             setLeaveFormData(prev => ({
                 ...prev,
-                leaveType: remainingLeaves <= 0 ? 'Loss of Pay' : 'Casual Leave'
+                leaveType: remainingLeaves <= 0 ? 'Sick Leave' : 'Casual Leave'
             }));
             setSelectedDates([]);
             setDateToAdd('');
@@ -243,15 +255,17 @@ const MyLeavesPage = () => {
 
         const paidDays = Math.min(weekdaysRequested, remainingLeaves);
         const lopDays = Math.max(0, weekdaysRequested - paidDays);
+        const effectiveLeaveType = isCasualExhausted ? 'Loss of Pay' : leaveFormData.leaveType;
 
         try {
-            const leaveReason = `${leaveFormData.leaveType}: ${leaveFormData.reason}` +
+            const leaveReason = `${effectiveLeaveType}: ${leaveFormData.reason}` +
                 (useSpecificDates ? ` (Dates: ${datesToApply.join(', ')})` : '');
 
             const leaveRows = useSpecificDates
                 ? datesToApply.map(date => ({
                     employee_id: user.id,
                     org_id: orgId,
+                    leave_type: effectiveLeaveType,
                     from_date: date,
                     to_date: date,
                     reason: leaveReason,
@@ -262,6 +276,7 @@ const MyLeavesPage = () => {
                 : [{
                     employee_id: user.id,
                     org_id: orgId,
+                    leave_type: effectiveLeaveType,
                     from_date: leaveFormData.startDate,
                     to_date: leaveFormData.endDate,
                     reason: leaveReason,
@@ -304,7 +319,7 @@ const MyLeavesPage = () => {
                     return {
                         id: leave.id,
                         name: 'You',
-                        type: leaveFormData.leaveType,
+                        type: effectiveLeaveType,
                         duration: rowDiff === 1 ? '1 Day' : `${rowDiff} Days`,
                         dates: rowStart.toDateString() === rowEnd.toDateString()
                             ? rowStart.toLocaleDateString('en-US', { month: 'short', day: '2-digit' })
@@ -560,14 +575,18 @@ const MyLeavesPage = () => {
                                     onChange={(e) => setLeaveFormData({ ...leaveFormData, leaveType: e.target.value })}
                                     style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '1rem', backgroundColor: 'var(--background)', color: 'var(--text-primary)' }}
                                     required
-                                    disabled={remainingLeaves <= 0}
                                 >
-                                    <option value="Casual Leave">Casual Leave</option>
+                                    <option value="Casual Leave" disabled={isCasualExhausted}>Casual Leave</option>
                                     <option value="Sick Leave">Sick Leave</option>
                                     <option value="Vacation">Vacation</option>
                                     <option value="Personal Leave">Personal Leave</option>
                                     <option value="Loss of Pay">Loss of Pay</option>
                                 </select>
+                                {isCasualExhausted && (
+                                    <div style={{ marginTop: '6px', fontSize: '0.8rem', color: '#991b1b', fontWeight: 600 }}>
+                                        Casual Leave is exhausted. You may choose any leave type, but this request will be marked as Loss of Pay.
+                                    </div>
+                                )}
                             </div>
 
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
