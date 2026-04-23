@@ -23,13 +23,15 @@ const ApplyLeaveModal = ({ onClose, onSuccess }) => {
     const [selectedDates, setSelectedDates] = useState([]);
     const [dateToAdd, setDateToAdd] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const isCasualExhausted = (remainingLeaves ?? 0) <= 0;
 
-    // Sync leave type based on balance
+    // If casual becomes exhausted while Casual Leave is selected,
+    // move selection to another visible option (submission still enforces LOP).
     useEffect(() => {
-        if (remainingLeaves !== undefined && remainingLeaves <= 0) {
-            setLeaveFormData(prev => ({ ...prev, leaveType: 'Loss of Pay' }));
+        if (isCasualExhausted && leaveFormData.leaveType === 'Casual Leave') {
+            setLeaveFormData(prev => ({ ...prev, leaveType: 'Sick Leave' }));
         }
-    }, [remainingLeaves]);
+    }, [isCasualExhausted, leaveFormData.leaveType]);
 
     // Safety guard: if we don't have user info, don't crash, just show a friendly message or nothing
     if (!orgId || !userId) {
@@ -101,13 +103,14 @@ const ApplyLeaveModal = ({ onClose, onSuccess }) => {
 
             const activeStartDate = selectedDates.length > 0 ? selectedDates[0] : leaveFormData.startDate;
             const activeEndDate = selectedDates.length > 0 ? selectedDates[selectedDates.length - 1] : leaveFormData.endDate;
+            const effectiveLeaveType = isCasualExhausted ? 'Loss of Pay' : leaveFormData.leaveType;
 
             const { error: insertError } = await supabase
                 .from('leaves')
                 .insert({
                     employee_id: userId,
                     org_id: orgId,
-                    leave_type: leaveFormData.leaveType,
+                    leave_type: effectiveLeaveType,
                     from_date: activeStartDate,
                     to_date: activeEndDate,
                     reason: leaveFormData.reason,
@@ -133,7 +136,7 @@ const ApplyLeaveModal = ({ onClose, onSuccess }) => {
     };
 
     // Ensure leaveStats exists before rendering
-    const stats = leaveStats || { monthlyQuota: 1, monthlyUsed: 0, yearlyUsed: 0 };
+    const stats = leaveStats || { annualQuota: 12, monthlyUsed: 0, yearlyUsed: 0, leaveYear: new Date().getFullYear() };
 
     return (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
@@ -161,13 +164,18 @@ const ApplyLeaveModal = ({ onClose, onSuccess }) => {
                                     style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border)', backgroundColor: 'var(--background)', color: 'var(--text-primary)' }}
                                     required
                                 >
-                                    <option value="Casual Leave">Casual Leave</option>
+                                    <option value="Casual Leave" disabled={isCasualExhausted}>Casual Leave</option>
                                     <option value="Sick Leave">Sick Leave</option>
                                     <option value="Vacation">Vacation</option>
                                     <option value="Personal Leave">Personal Leave</option>
                                     <option value="Loss of Pay">Loss of Pay</option>
                                 </select>
                             </div>
+                            {isCasualExhausted && (
+                                <p style={{ marginTop: '8px', fontSize: '0.8rem', color: '#b91c1c', fontWeight: 600 }}>
+                                    Casual Leave is exhausted. You may choose any leave type, but this request will be processed as Loss of Pay.
+                                </p>
+                            )}
                         </div>
 
                         <div>
@@ -253,16 +261,16 @@ const ApplyLeaveModal = ({ onClose, onSuccess }) => {
                             
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                                    <span style={{ fontWeight: 700, color: '#64748b' }}>Monthly Allowance</span>
-                                    <span style={{ fontSize: '1.2rem', fontWeight: 800 }}>{stats.monthlyQuota}</span>
+                                    <span style={{ fontWeight: 700, color: '#64748b' }}>Annual Allowance</span>
+                                    <span style={{ fontSize: '1.2rem', fontWeight: 800 }}>{stats.annualQuota ?? stats.monthlyQuota ?? 12}</span>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                                    <span style={{ fontWeight: 700, color: '#64748b' }}>Used This Month</span>
-                                    <span style={{ fontSize: '1.2rem', fontWeight: 800 }}>{stats.monthlyUsed}</span>
+                                    <span style={{ fontWeight: 700, color: '#64748b' }}>Used This Year</span>
+                                    <span style={{ fontSize: '1.2rem', fontWeight: 800 }}>{stats.yearlyUsed}</span>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', backgroundColor: 'rgba(2, 132, 199, 0.05)', borderRadius: '12px', border: '1px solid rgba(2, 132, 199, 0.2)' }}>
-                                    <span style={{ fontWeight: 700, color: '#0284c7' }}>Annual Usage</span>
-                                    <span style={{ fontSize: '1.4rem', fontWeight: 800, color: '#0284c7' }}>{stats.yearlyUsed} / 12</span>
+                                    <span style={{ fontWeight: 700, color: '#0284c7' }}>Balance ({stats.leaveYear || new Date().getFullYear()})</span>
+                                    <span style={{ fontSize: '1.4rem', fontWeight: 800, color: '#0284c7' }}>{remainingLeaves} / {stats.annualQuota ?? stats.monthlyQuota ?? 12}</span>
                                 </div>
                             </div>
                         </div>
