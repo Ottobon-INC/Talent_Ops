@@ -65,7 +65,7 @@ export function HeroSection() {
 
                         <div className="reveal-fade flex justify-center">
                             <GlowButton
-                                onClick={() => navigate('/request-demo', { state: { from: 'hero' } })}
+                                onClick={() => navigate('/wizard', { state: { from: 'hero' } })}
                                 label="Request a Demo"
                             />
                         </div>
