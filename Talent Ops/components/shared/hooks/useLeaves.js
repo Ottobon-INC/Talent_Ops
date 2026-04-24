@@ -34,7 +34,9 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
     const [leaveStats, setLeaveStats] = useState({
         monthlyUsed: 0,
         yearlyUsed: 0,
-        monthlyQuota: 1
+        monthlyQuota: 12,
+        annualQuota: 12,
+        leaveYear: new Date().getFullYear()
     });
     const [remainingLeaves, setRemainingLeaves] = useState(0);
     const [isLoading, setIsLoading] = useState(true);
@@ -48,9 +50,34 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
             const now = new Date();
             const currentMonth = now.getMonth();
             const currentYear = now.getFullYear();
-            const monthlyQuota = 1;
+            const fullYearQuota = 12;
+
+            const computeAnnualQuotaForYear = (joinDateStr, year) => {
+                if (!joinDateStr) return fullYearQuota;
+                const joinDate = new Date(joinDateStr);
+                if (Number.isNaN(joinDate.getTime())) return fullYearQuota;
+
+                const joinYear = joinDate.getFullYear();
+                const joinMonth = joinDate.getMonth(); // Jan=0
+
+                if (joinYear < year) return fullYearQuota;
+                if (joinYear > year) return 0;
+
+                // Joined in target year: Jan => 12, Feb => 11, ... Dec => 1
+                return Math.max(0, fullYearQuota - joinMonth);
+            };
 
             if (viewMode === 'personal' && userId) {
+                const { data: profileData, error: profileError } = await supabase
+                    .from('profiles')
+                    .select('join_date, created_at')
+                    .eq('id', userId)
+                    .maybeSingle();
+                if (profileError) throw profileError;
+
+                const userJoinAnchor = profileData?.join_date || profileData?.created_at || null;
+                const annualQuota = computeAnnualQuotaForYear(userJoinAnchor, currentYear);
+
                 // Personal fetch
                 const { data: leavesData, error: leavesError } = await supabase
                     .from('leaves')
@@ -93,9 +120,8 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
                                     tempMonthlyUsed += paidDays;
                                 }
                             } else if (isPending) {
-                                if (monthMatch && yearMatch) {
-                                    tempMonthlyUsed += paidDays;
-                                }
+                                // Pending requests are tracked in the table/list
+                                // but do NOT deduct available leave balance.
                             }
                         } catch (e) {
                             console.error("Error in leave loop:", e);
@@ -130,9 +156,11 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
                 setLeaveStats({
                     monthlyUsed: tempMonthlyUsed,
                     yearlyUsed: tempYearlyUsed,
-                    monthlyQuota
+                    monthlyQuota: annualQuota,
+                    annualQuota,
+                    leaveYear: currentYear
                 });
-                setRemainingLeaves(Math.max(0, monthlyQuota - tempMonthlyUsed));
+                setRemainingLeaves(Math.max(0, annualQuota - tempYearlyUsed));
 
             } else if (viewMode === 'manager' || viewMode === 'org') {
                 // Fetch organizational leaves for managers and executives
@@ -145,7 +173,7 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
 
                 const { data: profilesData, error: profilesError } = await supabase
                     .from('profiles')
-                    .select('id, full_name, total_leaves_balance')
+                    .select('id, full_name, total_leaves_balance, join_date, created_at')
                     .eq('org_id', orgId);
 
                 if (profilesError) throw profilesError;
@@ -170,13 +198,17 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
                         const empLeaves = leavesData.filter(l => l.employee_id === profile.id && l.status?.toLowerCase().includes('approv'));
                         const paid = empLeaves.reduce((sum, l) => sum + (l.duration_weekdays || 0), 0);
                         const lop = empLeaves.reduce((sum, l) => sum + (l.lop_days || 0), 0);
+                        const annualQuota = computeAnnualQuotaForYear(profile.join_date || profile.created_at, currentYear);
+                        const usedThisYear = empLeaves
+                            .filter(l => (l.from_date || '').startsWith(String(currentYear)))
+                            .reduce((sum, l) => sum + Math.max(0, (l.duration_weekdays || 0) - (l.lop_days || 0)), 0);
                         return {
                             id: profile.id,
                             name: profile.full_name,
                             total_taken: `${paid + lop} Days`,
                             paid_leaves: `${paid} Days`,
                             lop_days: `${lop} Days`,
-                            leaves_left: `${Math.max(0, 1 - (empLeaves.filter(l => new Date(l.from_date).getMonth() === currentMonth).length))} / 1`
+                            leaves_left: `${Math.max(0, annualQuota - usedThisYear)} / ${annualQuota}`
                         };
                     });
                     setLeaveStats(stats);

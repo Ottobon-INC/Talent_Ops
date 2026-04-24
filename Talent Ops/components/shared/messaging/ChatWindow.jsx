@@ -10,6 +10,7 @@ import VoteDetailsModal from './VoteDetailsModal';
 import MembersModal from './MembersModal';
 import AddMemberModal from './AddMemberModal';
 import RenameGroupModal from './RenameGroupModal';
+import MessageInfoModal from './MessageInfoModal';
 import DocumentViewer from '../DocumentViewer';
 
 // ── Helper: render message content with clickable links & newline support ──
@@ -100,6 +101,7 @@ const ChatWindow = ({
     const [showRenameModal, setShowRenameModal] = useState(false);
     const [newGroupName, setNewGroupName] = useState('');
     const [showVoteDetails, setShowVoteDetails] = useState(null);
+    const [showMessageInfoFor, setShowMessageInfoFor] = useState(null);
 
     // Document Viewer state
     const [previewUrl, setPreviewUrl] = useState('');
@@ -129,6 +131,17 @@ const ChatWindow = ({
         }
     }, [messages, selectedConversation]);
 
+    // Close reaction picker on click outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (showReactionPicker && !event.target.closest('.message-actions-container')) {
+                setShowReactionPicker(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showReactionPicker]);
+
     // Helper
     const getSenderName = (senderId) => {
         const user = orgUsers.find(u => u.id === senderId);
@@ -142,7 +155,7 @@ const ChatWindow = ({
 
     const handleReaction = (messageId, emoji) => {
         setShowReactionPicker(null);
-        onReaction(messageId, emoji);
+        onReaction(messageId, emoji, selectedConversation.org_id);
     };
 
     const handleRenameGroup = async () => {
@@ -451,17 +464,24 @@ const ChatWindow = ({
                                                 )}
 
                                                 {/* Message Actions Hover + Reaction Picker */}
-                                                {hoveredMessageId === msg.id && !msg.is_deleted && (
-                                                    <div style={{ position: 'absolute', top: '-32px', right: msg.sender_user_id === currentUserId ? '4px' : 'auto', left: msg.sender_user_id !== currentUserId ? '4px' : 'auto', zIndex: 100 }}>
+                                                {(hoveredMessageId === msg.id || showReactionPicker === msg.id) && !msg.is_deleted && (
+                                                    <div className="message-actions-container" style={{ 
+                                                        position: 'absolute', 
+                                                        top: '-42px', 
+                                                        right: msg.sender_user_id === currentUserId ? '4px' : 'auto', 
+                                                        left: msg.sender_user_id !== currentUserId ? '4px' : 'auto', 
+                                                        zIndex: 100,
+                                                        paddingBottom: '20px'
+                                                    }}>
                                                         {/* Reaction Picker Popup - above the action bar */}
                                                         {showReactionPicker === msg.id && (
                                                             <div style={{ position: 'absolute', bottom: '100%', right: msg.sender_user_id === currentUserId ? '0' : 'auto', left: msg.sender_user_id !== currentUserId ? '0' : 'auto', background: 'white', border: '1px solid #e5e7eb', borderRadius: '24px', padding: '6px 10px', display: 'flex', gap: '2px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', zIndex: 101, marginBottom: '6px', whiteSpace: 'nowrap' }}>
                                                                 {['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👏'].map(emoji => (
                                                                     <button key={emoji}
                                                                         onClick={(e) => { e.stopPropagation(); handleReaction(msg.id, emoji); }}
-                                                                        style={{ padding: '6px', background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', borderRadius: '50%', transition: 'all 0.15s', lineHeight: 1 }}
-                                                                        onMouseEnter={(e) => { e.target.style.transform = 'scale(1.3)'; e.target.style.background = '#f1f5f9'; }}
-                                                                        onMouseLeave={(e) => { e.target.style.transform = 'scale(1)'; e.target.style.background = 'none'; }}>
+                                                                        style={{ padding: '6px', background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', borderRadius: '50%', transition: 'all 0.1s ease', lineHeight: 1 }}
+                                                                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.3)'; e.currentTarget.style.background = '#f1f5f9'; }}
+                                                                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.background = 'none'; }}>
                                                                         {emoji}
                                                                     </button>
                                                                 ))}
@@ -496,8 +516,21 @@ const ChatWindow = ({
                                                                 </button>
                                                             )}
 
-                                                            {/* Delete Actions */}
-                                                            {msg.sender_user_id === currentUserId && (new Date() - new Date(msg.created_at)) < 5 * 60 * 1000 && (
+                                                            {/* WhatsApp-style Message Info (for sender in group/company chats) */}
+                                                            {msg.sender_user_id === currentUserId && (selectedConversation.type === 'team' || selectedConversation.type === 'everyone') && (
+                                                                <button
+                                                                    onClick={() => setShowMessageInfoFor(msg.id)}
+                                                                    title="Message Info"
+                                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', color: '#64748b', display: 'flex', borderRadius: '50%', transition: 'all 0.2s' }}
+                                                                    onMouseEnter={(e) => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#10b981'; }}
+                                                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#64748b'; }}
+                                                                >
+                                                                    <CheckCircle2 size={16} />
+                                                                </button>
+                                                            )}
+
+                                                            {/* Delete Actions - Now enabled for all message types (Issue 8) */}
+                                                            {msg.sender_user_id === currentUserId && (new Date() - new Date(msg.created_at)) < 15 * 60 * 1000 && (
                                                                 <>
                                                                     <div style={{ width: '1px', height: '18px', background: '#e2e8f0', margin: '0 6px' }} />
                                                                     <button onClick={() => onDeleteForMe(msg.id)} title="Delete for me"
@@ -575,8 +608,22 @@ const ChatWindow = ({
                                                 <div className="message-time">
                                                     {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                     {msg.sender_user_id === currentUserId && (
-                                                        <span style={{ marginLeft: '4px', display: 'inline-flex', verticalAlign: 'middle' }}>
-                                                            <svg width="16" height="11" viewBox="0 0 16 11" fill="none" style={{ color: '#3b82f6' }}>
+                                                        <span 
+                                                            style={{ marginLeft: '4px', display: 'inline-flex', verticalAlign: 'middle' }}
+                                                            title={msg.seen_by?.length > 0 ? msg.seen_by.map(s => `Seen by ${s.name} at ${new Date(s.seen_at).toLocaleTimeString()}`).join('\n') : 'Delivered'}
+                                                        >
+                                                            <svg
+                                                                width="16"
+                                                                height="11"
+                                                                viewBox="0 0 16 11"
+                                                                fill="none"
+                                                                style={{
+                                                                    color:
+                                                                        (selectedConversation.type === 'team' || selectedConversation.type === 'everyone')
+                                                                            ? (msg.is_read_by_all ? '#3b82f6' : '#94a3b8')
+                                                                            : (msg.is_read_by_others ? '#3b82f6' : '#94a3b8')
+                                                                }}
+                                                            >
                                                                 <path d="M11.071 0.929L4.5 7.5L1.929 4.929" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                                                 <path d="M14.071 0.929L7.5 7.5L6.5 6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                                             </svg>
@@ -647,6 +694,16 @@ const ChatWindow = ({
                     message={messages.find(m => m.id === showVoteDetails)}
                     votes={allPollVotes[showVoteDetails] || []}
                     onClose={() => setShowVoteDetails(null)}
+                />
+            )}
+
+            {/* ════════ Message Info Modal (Seen by list) ════════ */}
+            {showMessageInfoFor && (
+                <MessageInfoModal
+                    message={messages.find(m => m.id === showMessageInfoFor)}
+                    members={currentMembers}
+                    currentUserId={currentUserId}
+                    onClose={() => setShowMessageInfoFor(null)}
                 />
             )}
 

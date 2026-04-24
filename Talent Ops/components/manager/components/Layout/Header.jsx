@@ -6,15 +6,11 @@ import { useUser } from '../../context/UserContext';
 import NotificationDropdown from '../../../shared/NotificationDropdown';
 import { supabase } from '../../../../lib/supabaseClient';
 
-import { useBrowserNotification } from '../../../../hooks/useBrowserNotification';
-
 const Header = () => {
     const { addToast } = useToast();
     const navigate = useNavigate();
     const { userRole, userId } = useUser();
 
-    // Enable browser notifications - moved down
-    // useBrowserNotification(userId);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [showResults, setShowResults] = useState(false);
@@ -25,11 +21,8 @@ const Header = () => {
 
     // Handle new notification (update count + show toast)
     const handleNotificationUpdate = async (newNotification) => {
-        // Update unread count
         fetchUnreadCount();
-
-        // Show toast if notification data is present
-        if (newNotification) {
+        if (newNotification && !['message', 'mention'].includes(newNotification.type)) {
             addToast(newNotification.message, 'info');
         }
     };
@@ -42,7 +35,8 @@ const Header = () => {
                 .from('notifications')
                 .select('*', { count: 'exact', head: true })
                 .eq('receiver_id', user.id)
-                .eq('is_read', false);
+                .eq('is_read', false)
+                .not('type', 'in', '("message","mention")');
 
             setUnreadCount(count || 0);
         }
@@ -54,9 +48,6 @@ const Header = () => {
         return () => clearInterval(interval);
     }, []);
 
-    // Enable browser notifications with wrapper callback
-    useBrowserNotification(userId, handleNotificationUpdate);
-
     // Search Functionality
     useEffect(() => {
         const delayDebounceFn = setTimeout(() => {
@@ -67,7 +58,6 @@ const Header = () => {
                 setShowResults(false);
             }
         }, 300);
-
         return () => clearTimeout(delayDebounceFn);
     }, [searchQuery]);
 
@@ -79,7 +69,6 @@ const Header = () => {
             const query = searchQuery.toLowerCase();
             const results = [];
 
-            // 1. Search Employees (Profiles)
             const { data: profiles } = await supabase
                 .from('profiles')
                 .select('id, full_name, role, email')
@@ -99,7 +88,6 @@ const Header = () => {
                 });
             }
 
-            // 2. Search All Tasks
             const { data: tasks } = await supabase
                 .from('tasks')
                 .select('id, title, status')
@@ -119,7 +107,6 @@ const Header = () => {
                 });
             }
 
-            // 3. Search Project Documents
             const { data: documents } = await supabase
                 .from('project_documents')
                 .select('id, title, doc_type, created_at')
@@ -139,7 +126,6 @@ const Header = () => {
                 });
             }
 
-            // 4. Search Announcements
             const { data: announcements } = await supabase
                 .from('announcements')
                 .select('id, title, created_at')
@@ -161,15 +147,12 @@ const Header = () => {
 
             setSearchResults(results);
             setShowResults(true);
-
         } catch (error) {
             console.error('Search error:', error);
         }
     };
 
-    const handleSearch = (e) => {
-        setSearchQuery(e.target.value);
-    };
+    const handleSearch = (e) => setSearchQuery(e.target.value);
 
     const handleResultClick = (path) => {
         navigate(path);
@@ -177,21 +160,13 @@ const Header = () => {
         setShowResults(false);
     };
 
-    // Close dropdowns when clicking outside
     useEffect(() => {
         const handleClickOutside = (event) => {
-            if (searchRef.current && !searchRef.current.contains(event.target)) {
-                setShowResults(false);
-            }
-            if (notificationRef.current && !notificationRef.current.contains(event.target)) {
-                setShowNotifications(false);
-            }
+            if (searchRef.current && !searchRef.current.contains(event.target)) setShowResults(false);
+            if (notificationRef.current && !notificationRef.current.contains(event.target)) setShowNotifications(false);
         };
-
         document.addEventListener('mousedown', handleClickOutside);
-        return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
-        };
+        return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
     return (
@@ -230,7 +205,6 @@ const Header = () => {
                         }}
                     />
 
-                    {/* Search Results Dropdown */}
                     {showResults && (
                         <div style={{
                             position: 'absolute',

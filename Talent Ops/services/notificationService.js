@@ -92,3 +92,130 @@ export const sendAnnouncementNotification = async (recipientIds, creatorId, crea
     const message = `${announcementTitle}`;
     await sendBulkNotifications(recipientIds, creatorId, creatorName, message, 'announcement', orgId);
 };
+
+/**
+ * Marks all notifications as read for a user (Issue 9)
+ * @param {string} userId - User ID
+ */
+export const markAllNotificationsAsRead = async (userId) => {
+    try {
+        // 1. Permanently delete message-related notifications
+        const { error: delError } = await supabase
+            .from('notifications')
+            .delete()
+            .eq('receiver_id', userId)
+            .in('type', ['message', 'mention']);
+
+        if (delError) console.warn('Non-fatal: Error deleting message notifications:', delError);
+
+        // 2. Mark other notifications as read
+        const { error: updError } = await supabase
+            .from('notifications')
+            .update({ is_read: true })
+            .eq('receiver_id', userId)
+            .eq('is_read', false);
+
+        if (updError) throw updError;
+    } catch (error) {
+        console.error('Error marking all notifications as read:', error);
+        throw error;
+    }
+};
+
+/**
+ * Marks a single notification as read
+ * @param {string} notificationId - Notification ID
+ */
+export const markNotificationAsRead = async (notificationId) => {
+    try {
+        // First check type
+        const { data: notif } = await supabase
+            .from('notifications')
+            .select('type')
+            .eq('id', notificationId)
+            .single();
+
+        if (notif && ['message', 'mention'].includes(notif.type)) {
+            // Delete if message/mention
+            const { error } = await supabase
+                .from('notifications')
+                .delete()
+                .eq('id', notificationId);
+            if (error) throw error;
+        } else {
+            // Otherwise just mark as read
+            const { error } = await supabase
+                .from('notifications')
+                .update({ is_read: true })
+                .eq('id', notificationId);
+            if (error) throw error;
+        }
+    } catch (error) {
+        console.error('Error marking notification as read:', error);
+        throw error;
+    }
+};
+/**
+ * Deletes message/mention notifications for a specific sender
+ * @param {string} userId - Current user receiving
+ * @param {string} senderId - The sender we are looking at
+ */
+export const markMessageNotificationsAsRead = async (userId, senderId) => {
+    try {
+        const { error } = await supabase
+            .from('notifications')
+            .delete() // Permanently delete to clear history as requested
+            .eq('receiver_id', userId)
+            .eq('sender_id', senderId)
+            .in('type', ['message', 'mention']);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error clearing message notifications:', error);
+    }
+};
+
+/**
+ * Deletes all message and mention notifications for a user
+ * @param {string} userId - Current user ID
+ */
+export const markAllMessageNotificationsAsRead = async (userId) => {
+    try {
+        const { error } = await supabase
+            .from('notifications')
+            .delete() // Permanently delete to clear history as requested
+            .eq('receiver_id', userId)
+            .in('type', ['message', 'mention']);
+
+        if (error) throw error;
+    } catch (error) {
+        console.error('Error clearing all message notifications:', error);
+    }
+};
+
+/**
+ * Purge stale message/mention notifications older than 24 hours.
+ * These are transient by nature — if you didn't read them within a day,
+ * they should not resurface the next time you log in.
+ * This prevents the "4-month-old notification flood" bug.
+ * @param {string} userId - Current user ID
+ */
+export const purgeStaleMessageNotifications = async (userId) => {
+    try {
+        const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const { error } = await supabase
+            .from('notifications')
+            .delete()
+            .eq('receiver_id', userId)
+            .in('type', ['message', 'mention'])
+            .lt('created_at', cutoff);
+
+        if (error) {
+            console.warn('Non-fatal: Error purging stale message notifications:', error);
+        } else {
+            console.log('[NotificationService] Purged stale message notifications older than 24h');
+        }
+    } catch (error) {
+        console.error('Error purging stale message notifications:', error);
+    }
+};

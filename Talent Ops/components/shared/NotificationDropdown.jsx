@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Bell, Check, Trash2, X, CheckCheck } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import { markAllNotificationsAsRead, markNotificationAsRead } from '../../services/notificationService';
 
 const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpdate }) => {
     const [notifications, setNotifications] = useState([]);
@@ -39,6 +40,37 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                     if (onNotificationUpdate) onNotificationUpdate();
                 }
             )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'notifications',
+                    filter: `receiver_id=eq.${currentUserId}`
+                },
+                (payload) => {
+                    console.log('Notification updated:', payload.new);
+                    // If it was marked as read, remove it from the unread-only list
+                    if (payload.new.is_read) {
+                        setNotifications((prev) => prev.filter(n => n.id !== payload.new.id));
+                    }
+                    if (onNotificationUpdate) onNotificationUpdate();
+                }
+            )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'DELETE',
+                    schema: 'public',
+                    table: 'notifications'
+                },
+                (payload) => {
+                    console.log('Notification deleted:', payload.old);
+                    const deletedId = payload.old.id;
+                    setNotifications((prev) => prev.filter(n => n.id !== deletedId));
+                    if (onNotificationUpdate) onNotificationUpdate();
+                }
+            )
             .subscribe();
 
         return () => {
@@ -70,8 +102,10 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                 .from('notifications')
                 .select('*')
                 .eq('receiver_id', currentUserId)
+                .eq('is_read', false) // Only fetch unread notifications
+                .not('type', 'in', '("message","mention")') // Messages have their own UI
                 .order('created_at', { ascending: false })
-                .limit(10);
+                .limit(20);
 
             if (!error) {
                 setNotifications(data || []);
@@ -85,16 +119,10 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
 
     const markAsRead = async (notificationId) => {
         try {
-            await supabase
-                .from('notifications')
-                .update({ is_read: true })
-                .eq('id', notificationId);
+            await markNotificationAsRead(notificationId);
 
-            setNotifications(prev =>
-                prev.map(notif =>
-                    notif.id === notificationId ? { ...notif, is_read: true } : notif
-                )
-            );
+            // Remove from list immediately once read to clear "history"
+            setNotifications(prev => prev.filter(notif => notif.id !== notificationId));
 
             if (onNotificationUpdate) onNotificationUpdate();
         } catch (err) {
@@ -120,22 +148,17 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
 
     const markAllAsRead = async () => {
         try {
-            const unreadNotifications = notifications.filter(n => !n.is_read);
-            if (unreadNotifications.length === 0) return;
+            setLoading(true);
+            await markAllNotificationsAsRead(currentUserId);
 
-            await supabase
-                .from('notifications')
-                .update({ is_read: true })
-                .eq('receiver_id', currentUserId)
-                .eq('is_read', false);
-
-            setNotifications(prev =>
-                prev.map(notif => ({ ...notif, is_read: true }))
-            );
+            // Clear the entire list since they were all unread and are now read
+            setNotifications([]);
 
             if (onNotificationUpdate) onNotificationUpdate();
         } catch (err) {
             console.error('Error marking all as read:', err);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -157,6 +180,8 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                 return '⏳';
             case 'task_deadline_near':
                 return '⏰';
+            case 'mention':
+                return '@';
             default:
                 return '🔔';
         }
@@ -218,7 +243,7 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Bell size={20} />
-                    <h3 style={{ fontSize: '1rem', fontWeight: 'bold' }}>Notifications</h3>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 'bold' }}>New Notifications</h3>
                     {unreadCount > 0 && (
                         <span style={{
                             backgroundColor: 'var(--primary)',
@@ -292,7 +317,7 @@ const NotificationDropdown = ({ isOpen, onClose, dropdownRef, onNotificationUpda
                     <div style={{ padding: '32px', textAlign: 'center' }}>
                         <Bell size={32} color="var(--text-secondary)" style={{ opacity: 0.5, marginBottom: '8px' }} />
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                            No notifications yet
+                            You're all caught up!
                         </p>
                     </div>
                 ) : (

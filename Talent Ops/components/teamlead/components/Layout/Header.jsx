@@ -183,8 +183,8 @@ const Header = () => {
         // Update unread count
         fetchUnreadCount();
 
-        // Show toast if notification data is present
-        if (newNotification) {
+        // Message-style popups are handled by MessageNotificationStack only.
+        if (newNotification && !['message', 'mention'].includes(newNotification.type)) {
             addToast(newNotification.message, 'info');
         }
     };
@@ -197,7 +197,8 @@ const Header = () => {
                 .from('notifications')
                 .select('*', { count: 'exact', head: true })
                 .eq('receiver_id', user.id)
-                .eq('is_read', false);
+                .eq('is_read', false)
+                .not('type', 'in', '("message","mention")');
 
             setUnreadCount(count || 0);
         }

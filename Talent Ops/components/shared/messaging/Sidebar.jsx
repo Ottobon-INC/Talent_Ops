@@ -289,9 +289,11 @@ const Sidebar = ({
                         filteredConversations.map(conv => {
                             const lastMsgTime = conv.conversation_indexes?.[0]?.last_message_at ? new Date(conv.conversation_indexes[0].last_message_at).getTime() : 0;
                             const lastReadTime = lastReadTimes[conv.id] || 0;
-                            const isUnread = lastMsgTime > lastReadTime;
+                            const isSentByMe = conv.conversation_indexes?.[0]?.last_sender_id === currentUserId || false;
+                            
+                            // Important: Only unread if latest message is NOT from me and after I last read
+                            const isUnread = !isSentByMe && lastMsgTime > lastReadTime;
                             const lastMessage = conv.conversation_indexes?.[0]?.last_message || '';
-                            const isSentByMe = conv.conversation_indexes?.[0]?.last_sender_id === currentUserId;
 
                             return (
                                 <div
@@ -300,6 +302,9 @@ const Sidebar = ({
                                     onClick={() => onSelectConversation(conv)}
                                 >
                                     <div className="conversation-avatar">
+                                        {/* Badge shown directly on avatar area for unread (REMOVED: WhatsApp style uses counts on the right instead) */}
+                                        
+
                                         {conv.type === 'dm' ? (
                                             <UserAvatar
                                                 user={{
@@ -319,17 +324,18 @@ const Sidebar = ({
                                             {conv.name || 'Conversation'}
                                         </div>
                                         <div className="conversation-preview">
-                                            {/* Double checkmark for sent messages */}
-                                            {!isUnread && lastMessage && (
-                                                <span className="seen-indicator read" title="Seen">
-                                                    <svg width="16" height="11" viewBox="0 0 16 11" fill="none">
-                                                        <path d="M11.071 0.929L4.5 7.5L1.929 4.929" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                                                        <path d="M14.071 0.929L7.5 7.5L6.5 6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                            {/* Seen indicater for sent messages (Issue: Blue ticks outside) */}
+                                            {isSentByMe && lastMessage && (
+                                                <span className={`seen-indicator ${conv.last_message_read_by_others ? 'read' : 'sent'}`} title={conv.last_message_read_by_others ? 'Seen' : 'Delivered'}>
+                                                    <svg width="14" height="10" viewBox="0 0 16 11" fill="none">
+                                                        <path d="M11.071 0.929L4.5 7.5L1.929 4.929" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                                        <path d="M14.071 0.929L7.5 7.5L6.5 6.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                                                     </svg>
                                                 </span>
                                             )}
-                                            {lastMessage
-                                                || (conv.conversation_indexes?.[0]?.last_message_at ? '📎 Attachment' : 'No messages yet')}
+                                            <span className="preview-text">
+                                                {lastMessage || (conv.conversation_indexes?.[0]?.last_message_at ? '📎 Attachment' : 'No messages yet')}
+                                            </span>
                                         </div>
                                     </div>
                                     <div className="conversation-meta">
@@ -355,7 +361,7 @@ const Sidebar = ({
                                             })() : ''}
                                         </div>
                                         {isUnread && (
-                                            <span className="unread-badge">●</span>
+                                            <span className="unread-count-badge">{conv.unread_count || 1}</span>
                                         )}
                                     </div>
                                 </div>

@@ -21,6 +21,24 @@ export const NotificationProvider = ({ children }) => {
     const { addToast } = useToast();
     const navigate = useNavigate();
 
+    const showBrowserNotification = (title, body) => {
+        try {
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                const notif = new Notification(title, {
+                    body: body,
+                    tag: 'talent-ops-notif',
+                    renotify: true
+                });
+                notif.onclick = () => {
+                    window.focus();
+                    notif.close();
+                };
+            }
+        } catch (e) {
+            console.warn('[NotificationContext] Browser notification failed:', e);
+        }
+    };
+
     useEffect(() => {
         const getUser = async () => {
             const { data: { user } } = await supabase.auth.getUser();
@@ -36,6 +54,11 @@ export const NotificationProvider = ({ children }) => {
             }
         });
 
+        // Request browser notification permission
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission().catch(() => {});
+        }
+
         return () => subscription.unsubscribe();
     }, []);
 
@@ -43,7 +66,7 @@ export const NotificationProvider = ({ children }) => {
         if (!userId) return;
 
         const channel = supabase
-            .channel(`app-notifs-${userId}`)
+            .channel(`app-notifs-rt-${userId}`)
             .on(
                 'postgres_changes',
                 {
@@ -55,15 +78,15 @@ export const NotificationProvider = ({ children }) => {
                 (payload) => {
                     const notif = payload.new;
                     
-                    // Messages are handled purely by MessageContext
-                    if (notif.type === 'message') return;
+                    // Messages and Mentions are handled purely by MessageContext
+                    if (notif.type === 'message' || notif.type === 'mention') return;
 
                     let type = 'info';
                     
                     if (notif.type === 'task_phase_approved') {
                         type = 'success';
                     } else if (notif.type === 'task_phase_rejected') {
-                        type = 'error'; // Error is red toast
+                        type = 'error';
                     }
 
                     if (addToast) {
@@ -73,6 +96,14 @@ export const NotificationProvider = ({ children }) => {
                             globalAudio.currentTime = 0;
                             globalAudio.play().catch(() => {});
                         } catch (e) {}
+
+                        // Show browser notification if tab is hidden
+                        if (document.visibilityState === 'hidden') {
+                            showBrowserNotification(
+                                'Talent Ops Update',
+                                notif.message || 'You have a new update'
+                            );
+                        }
                     }
                 }
             )
@@ -81,7 +112,7 @@ export const NotificationProvider = ({ children }) => {
         return () => {
             supabase.removeChannel(channel);
         };
-    }, [userId, addToast, navigate]);
+    }, [userId, addToast]);
 
     return (
         <NotificationContext.Provider value={{}}>

@@ -15,32 +15,20 @@ export const useBrowserNotification = (userId, onNewNotification = null) => {
 
     useEffect(() => {
         // Request permission on mount
-        if (Notification.permission === 'default') {
-            Notification.requestPermission();
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission().catch(console.warn);
         }
     }, []);
 
     useEffect(() => {
         if (!userId) {
-            console.log('[useBrowserNotification] No userId provided yet.');
             return;
         }
-
-        console.log(`[useBrowserNotification] Initializing for user: ${userId}`);
 
         // Check if browser supports notifications
-        if (!("Notification" in window)) {
-            console.log("[useBrowserNotification] This browser does not support desktop notification");
+        if (typeof window === 'undefined' || !("Notification" in window)) {
             return;
         }
-
-        if (Notification.permission !== "granted") {
-            console.log('[useBrowserNotification] Permission not granted:', Notification.permission);
-        } else {
-            console.log('[useBrowserNotification] Permission granted.');
-        }
-
-        console.log('[useBrowserNotification] Setting up Supabase channel...');
 
         const channel = supabase
             .channel(`browser-notifications-${userId}`) // Unique channel name per user
@@ -53,68 +41,40 @@ export const useBrowserNotification = (userId, onNewNotification = null) => {
                     filter: `receiver_id=eq.${userId}`
                 },
                 (payload) => {
-                    console.log('[useBrowserNotification] Payload received:', payload);
                     const newNotification = payload.new;
 
-                    // Trigger callback for UI updates (e.g., updating unread count)
-                    // Use the ref to get the latest callback
+                    // IN-APP NOTIFICATION logic remains (callbackRef.current handles this)
                     if (callbackRef.current && typeof callbackRef.current === 'function') {
-                        console.log('[useBrowserNotification] invoking onNewNotification with:', newNotification);
                         callbackRef.current(newNotification);
                     }
 
-                    // Only show if permission is granted
-                    if (Notification.permission === "granted") {
-                        console.log('[useBrowserNotification] Triggering notification');
-                        const title = newNotification.sender_name
-                            ? `New Message from ${newNotification.sender_name}`
-                            : 'New Notification';
-
-                        const body = newNotification.message || 'You have received a new notification';
+                    // Show browser notification if tab is hidden
+                    if (document.visibilityState === 'hidden' && Notification.permission === "granted") {
+                        const title = newNotification?.sender_name
+                            ? `${newNotification.sender_name}`
+                            : 'Talent Ops';
+                        const body = newNotification?.message || 'You have a new notification';
 
                         try {
-                            // Play sound
-                            const audio = new Audio('/sound.mp3');
-                            audio.play().catch(e => console.log('Audio play failed', e));
-
-                            // Create notification
                             const notification = new Notification(title, {
-                                body: body,
-                                icon: null,
-                                tag: newNotification.id, // prevents duplicates across tabs/calls
-                                silent: true, // silences the native browser chime
-                                renotify: true, // play sound/alert even if replacing a notification
-                                requireInteraction: true
+                                body,
+                                tag: newNotification?.id || `notif-${Date.now()}`,
+                                renotify: false
                             });
 
-                            // Optional: Focus window on click
-                            notification.onclick = function () {
+                            notification.onclick = () => {
                                 window.focus();
-                                this.close();
+                                notification.close();
                             };
                         } catch (e) {
-                            console.error('[useBrowserNotification] Error creating notification:', e);
+                            console.warn('[useBrowserNotification] Failed to create notification:', e);
                         }
-                    } else {
-                        console.log('[useBrowserNotification] Skipped notification because permission is:', Notification.permission);
                     }
                 }
             )
-            .subscribe((status) => {
-                console.log(`[useBrowserNotification] Subscription status changed to: ${status}`);
-                if (status === 'SUBSCRIBED') {
-                    console.log('[useBrowserNotification] Successfully subscribed to realtime events');
-                }
-                if (status === 'CHANNEL_ERROR') {
-                    console.error('[useBrowserNotification] Realtime channel error. Check your connection or RLS policies.');
-                }
-                if (status === 'TIMED_OUT') {
-                    console.error('[useBrowserNotification] Realtime subscription timed out.');
-                }
-            });
+            .subscribe();
 
         return () => {
-            console.log('[useBrowserNotification] Cleaning up subscription for', userId);
             supabase.removeChannel(channel);
         };
     }, [userId]);

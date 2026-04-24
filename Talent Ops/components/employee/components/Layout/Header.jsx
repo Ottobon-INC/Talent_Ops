@@ -10,10 +10,13 @@ import { useTheme } from '../../../shared/context/ThemeContext';
 
 import { useBrowserNotification } from '../../../../hooks/useBrowserNotification';
 
+import { useMessages } from '../../../shared/context/MessageContext';
+
 const Header = () => {
     const { addToast } = useToast();
     const navigate = useNavigate();
     const { userRole, userId, orgId } = useUser();
+    const { unreadCount: messageUnreadCount } = useMessages(); // Get unread count from message context
 
     // Enable browser notifications - moved down
     // useBrowserNotification(userId);
@@ -154,8 +157,8 @@ const Header = () => {
         // Update unread count
         fetchUnreadCount();
 
-        // Show toast if notification data is present
-        if (newNotification) {
+        // Message-style popups are handled by MessageNotificationStack only.
+        if (newNotification && !['message', 'mention'].includes(newNotification.type)) {
             console.log('[Header] Calling addToast with:', newNotification.message);
             addToast(newNotification.message, 'info');
         } else {
@@ -171,7 +174,8 @@ const Header = () => {
                 .from('notifications')
                 .select('*', { count: 'exact', head: true })
                 .eq('receiver_id', user.id)
-                .eq('is_read', false);
+                .eq('is_read', false)
+                .not('type', 'in', '("message","mention")');
 
             setUnreadCount(count || 0);
         }
@@ -181,7 +185,7 @@ const Header = () => {
         fetchUnreadCount();
         const interval = setInterval(fetchUnreadCount, 30000);
         return () => clearInterval(interval);
-    }, []);
+    }, [messageUnreadCount]); // Re-fetch when message unread count changes
 
     // Enable browser notifications with wrapper callback
     useBrowserNotification(userId, handleNotificationUpdate);

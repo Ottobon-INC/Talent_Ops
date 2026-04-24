@@ -57,6 +57,7 @@ export function LandingPage() {
             return () => { cancelled = true; clearTimeout(timeout); };
         }
     }, [scrollTo]);
+
     return (
         <SmoothScroll>
             <style dangerouslySetInnerHTML={{ __html: `
