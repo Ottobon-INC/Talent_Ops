@@ -120,103 +120,38 @@ export function RequestDemoPage() {
                         </div>
                     </motion.div>
 
-                    {/* Right side: Form */}
+                    {/* Right side: Onboarding Invitation */}
                     <motion.div
                         initial={{ opacity: 0, y: 30 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.8, delay: 0.2 }}
-                        className="bg-white p-8 md:p-10 rounded-[32px] shadow-2xl border border-[#dadada]"
+                        className="bg-white p-12 md:p-16 rounded-[40px] shadow-2xl border border-[#dadada] text-center flex flex-col items-center justify-center min-h-[500px]"
                     >
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                            <div className="space-y-2">
-                                <label htmlFor="name" className="text-sm font-bold text-[#1f2937]/60 uppercase tracking-widest pl-1">Full Name</label>
-                                <div className="relative">
-                                    <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#dadada]" />
-                                    <input
-                                        id="name"
-                                        name="name"
-                                        type="text"
-                                        placeholder="Jane Cooper"
-                                        value={formData.name}
-                                        onChange={handleChange}
-                                        className={`w-full bg-[#F8F7F4] border ${errors.name ? 'border-red-500' : 'border-[#dadada]'} rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-all font-serif text-sm`}
-                                    />
-                                </div>
-                                {errors.name && <p className="text-red-500 text-[10px] mt-0.5 pl-1">{errors.name}</p>}
-                            </div>
+                        <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-10">
+                            <Building2 className="w-8 h-8 text-[#3b82f6]" />
+                        </div>
 
-                            <div className="space-y-2">
-                                <label htmlFor="email" className="text-sm font-bold text-[#1f2937]/60 uppercase tracking-widest pl-1">Work Email</label>
-                                <div className="relative">
-                                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#dadada]" />
-                                    <input
-                                        id="email"
-                                        name="email"
-                                        type="email"
-                                        placeholder="jane@company.com"
-                                        value={formData.email}
-                                        onChange={handleChange}
-                                        className={`w-full bg-[#F8F7F4] border ${errors.email ? 'border-red-500' : 'border-[#dadada]'} rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-all font-serif text-sm`}
-                                    />
-                                </div>
-                                {errors.email && <p className="text-red-500 text-[10px] mt-0.5 pl-1">{errors.email}</p>}
-                            </div>
+                        <h2 className="text-4xl md:text-5xl font-heading font-bold text-[#1f2937] leading-tight mb-8">
+                            Ready to build your <br/> workspace?
+                        </h2>
+                        
+                        <p className="text-lg text-[#1f2937]/60 font-serif leading-relaxed mb-12 max-w-sm">
+                            Skip the wait and start configuring your workforce intelligence environment immediately through our automated onboarding wizard.
+                        </p>
 
-                            <div className="space-y-2">
-                                <label htmlFor="company" className="text-sm font-bold text-[#1f2937]/60 uppercase tracking-widest pl-1">Company Name</label>
-                                <div className="relative">
-                                    <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#dadada]" />
-                                    <input
-                                        id="company"
-                                        name="company"
-                                        type="text"
-                                        placeholder="Acme Corp"
-                                        value={formData.company}
-                                        onChange={handleChange}
-                                        className={`w-full bg-[#F8F7F4] border ${errors.company ? 'border-red-500' : 'border-[#dadada]'} rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-all font-serif text-sm`}
-                                    />
-                                </div>
-                                {errors.company && <p className="text-red-500 text-[10px] mt-0.5 pl-1">{errors.company}</p>}
-                            </div>
+                        <button
+                            onClick={() => navigate('/wizard')}
+                            className="w-full bg-[#3b82f6] text-white py-5 rounded-2xl font-bold text-xl hover:bg-[#2563eb] transition-all shadow-2xl shadow-blue-500/25 flex items-center justify-center gap-3 group"
+                        >
+                            Start Setup Now
+                            <ChevronRight className="w-6 h-6 transition-transform group-hover:translate-x-1" />
+                        </button>
 
-                            <div className="space-y-2">
-                                <label htmlFor="phone" className="text-sm font-bold text-[#1f2937]/60 uppercase tracking-widest pl-1">Phone (Optional)</label>
-                                <div className="relative">
-                                    <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#dadada]" />
-                                    <input
-                                        id="phone"
-                                        name="phone"
-                                        type="tel"
-                                        placeholder="+1 (555) 000-0000"
-                                        value={formData.phone}
-                                        onChange={handleChange}
-                                        className="w-full bg-[#F8F7F4] border border-[#dadada] rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-all font-serif text-sm"
-                                    />
-                                </div>
-                            </div>
-
-                            <button
-                                type="submit"
-                                disabled={isSubmitting}
-                                className="w-full bg-[#3b82f6] text-white py-4 rounded-xl font-bold text-base hover:bg-[#2563eb] disabled:opacity-70 disabled:cursor-not-allowed transition-all shadow-xl shadow-[#3b82f6]/20 flex items-center justify-center gap-3 relative overflow-hidden group"
-                            >
-                                <span className={isSubmitting ? 'opacity-0' : 'opacity-100'}>Schedule Your Demo</span>
-                                {isSubmitting && (
-                                    <Loader2 className="w-5 h-5 animate-spin absolute" />
-                                )}
-                                {!isSubmitting && (
-                                    <motion.div
-                                        animate={{ x: [0, 5, 0] }}
-                                        transition={{ repeat: Infinity, duration: 1.5 }}
-                                    >
-                                        <ChevronRight className="w-5 h-5" />
-                                    </motion.div>
-                                )}
-                            </button>
-                            <p className="text-center text-[10px] text-[#1f2937]/40 font-serif lowercase">
-                                By clicking, you agree to our terms and privacy policy.
-                            </p>
-                        </form>
+                        <div className="mt-8 flex items-center gap-2 text-[10px] font-bold text-[#1f2937]/40 uppercase tracking-widest">
+                            <span>No credit card required</span>
+                            <span className="w-1 h-1 rounded-full bg-[#1f2937]/20" />
+                            <span>Instant Access</span>
+                        </div>
                     </motion.div>
                 </div>
             </main>
