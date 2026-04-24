@@ -27,7 +27,7 @@ export function CTASection() {
 
                         <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
                             <button 
-                                onClick={() => navigate('/wizard', { state: { from: 'cta' } })}
+                                onClick={() => navigate('/request-demo', { state: { from: 'cta' } })}
                                 className="bg-[#3b82f6] text-white px-12 py-5 rounded-[12px] font-bold text-lg hover:bg-[#2563eb] transition-all shadow-xl flex items-center gap-3 group"
                             >
                                 Get Started Now
