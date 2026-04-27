@@ -130,12 +130,18 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
 
                     // Map leaves for UI
                     const mappedLeaves = leavesData.map(leave => {
-                        const start = new Date(leave.from_date);
-                        const end = new Date(leave.to_date || leave.from_date);
                         const diffDays = leave.duration_weekdays || calculateWeekdayDuration(leave.from_date, leave.to_date || leave.from_date) || 1;
-
                         let typeText = leave.leave_type || 'Leave';
-                        let reasonText = leave.reason || '';
+                        
+                        const formatDate = (dStr) => {
+                            if (!dStr) return '';
+                            const d = new Date(dStr);
+                            if (isNaN(d.getTime())) return dStr;
+                            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                        };
+                        const datesStr = leave.to_date && leave.to_date !== leave.from_date
+                            ? `${formatDate(leave.from_date)} - ${formatDate(leave.to_date)}`
+                            : formatDate(leave.from_date);
                         
                         return {
                             ...leave,
@@ -143,6 +149,7 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
                             type: typeText,
                             startDate: leave.from_date,
                             endDate: leave.to_date,
+                            dates: datesStr,
                             duration: `${diffDays} Days`,
                             status: leave.status ? leave.status.charAt(0).toUpperCase() + leave.status.slice(1).toLowerCase() : 'Pending',
                             created_at: leave.created_at
@@ -184,11 +191,32 @@ export const useLeaves = (orgId, userId, viewMode = 'personal') => {
                 }
 
                 if (leavesData) {
-                    const mappedLeaves = leavesData.map(leave => ({
-                        ...leave,
-                        name: profileMap[leave.employee_id] || 'Unknown',
-                        status: leave.status ? leave.status.charAt(0).toUpperCase() + leave.status.slice(1).toLowerCase() : 'Pending'
-                    }));
+                    const mappedLeaves = leavesData.map(leave => {
+                        const diffDays = leave.duration_weekdays || calculateWeekdayDuration(leave.from_date, leave.to_date || leave.from_date) || 1;
+                        let typeText = leave.leave_type || 'Leave';
+                        
+                        const formatDate = (dStr) => {
+                            if (!dStr) return '';
+                            const d = new Date(dStr);
+                            if (isNaN(d.getTime())) return dStr;
+                            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                        };
+                        const datesStr = leave.to_date && leave.to_date !== leave.from_date
+                            ? `${formatDate(leave.from_date)} - ${formatDate(leave.to_date)}`
+                            : formatDate(leave.from_date);
+
+                        return {
+                            ...leave,
+                            name: profileMap[leave.employee_id] || 'Unknown',
+                            id: leave.id,
+                            type: typeText,
+                            startDate: leave.from_date,
+                            endDate: leave.to_date,
+                            dates: datesStr,
+                            duration: `${diffDays} Days`,
+                            status: leave.status ? leave.status.charAt(0).toUpperCase() + leave.status.slice(1).toLowerCase() : 'Pending'
+                        };
+                    });
                     mappedLeaves.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
                     setLeaves(mappedLeaves);
                 }
