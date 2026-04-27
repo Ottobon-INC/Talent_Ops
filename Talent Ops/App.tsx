@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { LoginPage } from './components/pages/LoginPage';
 import { LandingPage } from './landing/LandingPage';
 import { ExecutiveDashboard } from './components/pages/ExecutiveDashboard';
@@ -25,9 +25,24 @@ import OnboardingWizard from './components/shared/Onboarding/OnboardingWizard';
 function App() {
     console.log('App Initializing... ');
 
+    // GLOBAL SCROLL RECOVERY ON ROUTE CHANGE
+    const ScrollRecovery = () => {
+        const { pathname } = useLocation();
+        useEffect(() => {
+            console.log('Route changed to:', pathname, '- Enforcing scroll recovery');
+            document.body.style.overflow = 'auto';
+            document.body.style.height = 'auto';
+            document.documentElement.style.overflow = 'auto';
+            document.documentElement.style.height = 'auto';
+            document.documentElement.classList.remove('lenis', 'lenis-stopped', 'lenis-smooth');
+        }, [pathname]);
+        return null;
+    };
+
     return (
         <ErrorBoundary>
             <Router>
+                <ScrollRecovery />
                 <StylesInjection />
                 <Routes>
                     <Route path="/" element={<LandingPage />} />

@@ -33,7 +33,7 @@ const STYLES = `
 
 html.lenis, html.lenis body { height: auto; }
 .lenis.lenis-smooth { scroll-behavior: auto !important; }
-.lenis.lenis-stopped { overflow: hidden; }
+/* Removed lenis-stopped overflow lock */
 
 /* Performance optimization for smooth scrolling */
 body {

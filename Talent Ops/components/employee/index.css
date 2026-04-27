@@ -143,18 +143,3 @@ button {
   background-color: var(--surface);
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 0 !important;
-  display: none !important;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent !important;
-}
-
-::-webkit-scrollbar-thumb {
-  background: transparent !important;
-  border-radius: 4px;
-  opacity: 0 !important;
-}
