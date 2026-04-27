@@ -72,7 +72,7 @@ const STYLES = `
 html.lenis, html.lenis body { height: auto; }
 .lenis.lenis-smooth { scroll-behavior: auto !important; }
 .lenis.lenis-smooth [data-lenis-prevent] { overscroll-behavior: contain; }
-.lenis.lenis-stopped { overflow: hidden; }
+/* Removed lenis-stopped overflow lock */
 .lenis.lenis-scrolling iframe { pointer-events: none; }
 
 body { background-color: var(--color-paper); color: var(--color-ink); overflow-x: hidden; width: 100%; }

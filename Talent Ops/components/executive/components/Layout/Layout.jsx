@@ -26,6 +26,12 @@ const Layout = ({ children }) => {
     const { addToast } = useToast();
 
     React.useEffect(() => {
+        // FORCE SCROLL RECOVERY
+        document.body.style.overflow = 'auto';
+        document.body.style.height = 'auto';
+        document.documentElement.style.overflow = 'auto';
+        document.documentElement.style.height = 'auto';
+        
         const fetchUser = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
@@ -81,7 +87,7 @@ const Layout = ({ children }) => {
     return (
         <NotificationProvider>
             <MessageProvider addToast={addToast}>
-                <div style={{ display: 'flex', minHeight: '100vh' }}>
+                <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
                     <Sidebar
                         isCollapsed={isCollapsed}
                         toggleSidebar={() => setIsCollapsed(!isCollapsed)}
@@ -93,10 +99,18 @@ const Layout = ({ children }) => {
                         flex: 1,
                         display: 'flex',
                         flexDirection: 'column',
-                        transition: 'margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
+                        transition: 'margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                        height: '100%',
+                        overflow: 'hidden'
                     }}>
                         <Header />
-                        <main style={{ flex: 1, padding: location.pathname.includes('/messages') ? 0 : '1.5rem', backgroundColor: location.pathname.includes('/messages') ? '#ffffff' : 'var(--background)' }}>
+                        <main style={{ 
+                            flex: 1, 
+                            overflowY: 'auto',
+                            padding: location.pathname.includes('/messages') ? 0 : '1.5rem', 
+                            backgroundColor: location.pathname.includes('/messages') ? '#ffffff' : 'var(--background)',
+                            scrollbarWidth: 'auto'
+                        }}>
                             {children}
                         </main>
                         <Chatbot />

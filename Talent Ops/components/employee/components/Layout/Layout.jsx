@@ -26,6 +26,13 @@ const Layout = ({ children }) => {
     const { addToast } = useToast();
 
     React.useEffect(() => {
+        // FORCE SCROLL RECOVERY
+        // This clears any residual locks from smooth-scrolling libraries (like Lenis)
+        document.body.style.overflow = 'auto';
+        document.body.style.height = 'auto';
+        document.documentElement.style.overflow = 'auto';
+        document.documentElement.style.height = 'auto';
+        
         const fetchUser = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
@@ -86,29 +93,31 @@ const Layout = ({ children }) => {
     return (
         <NotificationProvider>
             <MessageProvider addToast={addToast}>
-                <div style={{ display: 'flex', minHeight: '100vh' }}>
+                <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', backgroundColor: 'var(--background)' }}>
                     <Sidebar
                         isCollapsed={isCollapsed}
                         toggleSidebar={() => setIsCollapsed(!isCollapsed)}
                         onMouseEnter={() => setIsCollapsed(false)}
                         onMouseLeave={() => setIsCollapsed(true)}
                     />
-                    <div className="no-scrollbar" style={{
+                    <div style={{
                         marginLeft: isCollapsed ? '70px' : '240px',
                         flex: 1,
                         display: 'flex',
                         flexDirection: 'column',
                         transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-                        overflowX: 'hidden',
-                        minWidth: 0
+                        overflow: 'hidden',
+                        height: '100%'
                     }}>
                         <Header />
-                        <main className="no-scrollbar" style={{
+                        <main style={{
                             flex: 1,
                             overflowY: 'auto',
                             overflowX: 'hidden',
                             padding: location.pathname.includes('/messages') ? 0 : '1.5rem',
-                            backgroundColor: location.pathname.includes('/messages') ? '#ffffff' : 'var(--background)'
+                            backgroundColor: location.pathname.includes('/messages') ? '#ffffff' : 'var(--background)',
+                            scrollbarWidth: 'auto',
+                            WebkitOverflowScrolling: 'touch'
                         }}>
                             {children}
                         </main>
